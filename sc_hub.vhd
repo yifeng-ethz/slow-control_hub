@@ -12,9 +12,7 @@
 --		Date: Feb 13, 2024
 -- =========
 -- Description:	[Slow Control Hub] 
-	-- Interfacing with NIOS II (Avalon-MM) and sc_rx (to be compliant).
-	-- Acting as the Hub with two Avalon-MM slave ports and one master port to access 
-	-- the subsystem RAM, including firefly, subdet and fe_reg.
+	-- Acting as the Hub with two Avalon-MM Master port to interfacing the ports locally in this FPGA.
 	
 -- Block diagram: 
 	--+-------------------------------------------------+------------------+
@@ -43,41 +41,6 @@
 	--|  +------------+   +----------+                  |                  |
 	--|                                                 |                  |
 	--+-------------------------------------------------+------------------+
-	
--- Situation:
-	-- The address code for fe_reg and firefly (feb common) is as follows:
-		-- from 4hFC00 to 4hFFFF
-	-- The address code for subdet (mutrig/scifi/tile) is as follows:
-		-- from 4h0000 to 4h00FF is a scratch pad for temporary, e.g. cfg bitstream of mutrig
-		-- from 4h4000 to 4h40FF is csr for sorter
-		-- from 4h4100 to 4h41FF is csr for mutrig general purpose stuff
-	
-	-- These address code is provieded by the sc_rx as or nios, which is virtual memory address.
-	-- These address code is used to access (W/R) register or memory on FPGA by host PC. 
-
-	-- In order to save space on device, the address code (virtual space) must be mapped to 
-	-- qsys bus address (physical space). 
-	
-	-- It should be handled by the so-called slow control hub, which issues read/write command 
-	-- to appropriate parties based on the incoming address code. For example, the read/write
-	-- to the scratch pad must be forwarded to the BRAM. For another example, the read/write to
-	-- the feb common registers shall be addressed to the ALM registers, where local IPs can also
-	-- access. To avoid write conflicts, the local IPs will always win the arbitration.
-	
-	-- To conclude, the continuous large chunk of address code should be layout as BRAM, while 
-	-- the scattered address code should be implemented as registers on FPGA. The call for empty 
-	-- address code should be returned with an exception message to the host PC.  
-	
--- Realization:
-	-- As to avoid large fan-out from the sc-hub to local registers, the transaction must be handled
-	-- by the qsys as a system level interconnect. It is beneficial in terms of CDC and routing.
-	-- The hub should issue transaction by translating the address code into address map of qsys.
-	
-	-- Integrating into the sole qsys with the sc_rx, sc_hub and all other datapath IPs is the ultimate
-	-- goal. 
-	
-	-- The sc_hub should have single master to talk to local IPs csr slave port, once the address code
-	-- is translated. The translation can be done by the hub.  
 	
 -- Mu3e IP Library: 
 			--@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\
@@ -115,7 +78,6 @@
 			--@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\
 			--@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\
 			--@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@}
-	
 --	
 -- ================ synthsizer configuration =================== 		
 -- altera vhdl_input_version vhdl_2008
@@ -221,7 +183,6 @@ architecture rtl of sc_hub is
 	
 	signal sc_hub_reset_done					: std_logic;
 
-	signal preamble_charac	: std_logic_vector(31 downto 0)	:= "000111------------------10111100";
 	signal skipWord_charac	: std_logic_vector(31 downto 0)	:= "00000000000000000000000010111100"; 
 	
 	type sc_pkt_info_t is record
