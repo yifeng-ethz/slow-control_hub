@@ -28,9 +28,11 @@ The **SC reply (ack) packet** has the format as following:
 
 ## Slow-Control Hub IP Parameters
 
-| <font color="blue">Parameter</font> | <font color="blue">Values</font> | <font color="blue">Description</font> |
+| Parameter | Values | Description |
 |:---------:|:------:|:-----------:|
 |**Backpressure**|On or Off|Use a backpressure fifo for the uplink reply packet|
+|**SCHEDULER_USE_PKT_TRANSFER**|On or Off|Relavent if **Backpressure** is on. Only assert ready, when eop of the packet is in the fifo. Helpful in removing bubbles in packet.|
+
 
 
 
