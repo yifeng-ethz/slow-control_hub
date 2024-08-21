@@ -13,27 +13,12 @@ Version (qsys): 18.1
 
 This IP serves as the media layer translation between standard Mu3e SC Packet and Avalon Memory-Mapped (AVMM) transactions, which should be instantiated on the Frontend-Board (FEB).  
   
-(SWB->FEB) Mu3e SC command from Switching-Board (SWB) is translated into AVMM read or write command.
-(FEB->SWB) AVMM read or write respond is translated into Mu3e SC reply.
+(SWB->FEB) **Mu3e SC command** from Switching-Board (SWB) is translated into AVMM read or write command.
+(FEB->SWB) AVMM read or write respond is translated into **Mu3e SC reply**.
   
 It features a backpressure fifo to queue the uplink Mu3e SC reply packet in order.  
 
-$$
-\usepackage{bytefield}
-\begin{bytefield}{32}
-        \bitheader{0-31}  \\
-        \begin{rightwordgroup}{preamble}
-            \bitbox{6}{000111} \bitbox{2}{SC} \bitbox{16}{FPGA ID} \bitbox{8}{header K28.5}
-        \end{rightwordgroup} \\
-        \bitbox{4}{-}\bitbox{1}{$\bar{M}$}\bitbox{1}{$\bar{S}$}\bitbox{1}{$\bar{T}$}\bitbox{1}{$\bar{R}$}\bitbox{24}{start address} \\ 
-        \begin{rightwordgroup}{read}
-            \bitbox{16}{-} \bitbox{16}{length}
-        \end{rightwordgroup} \\
-        \begin{rightwordgroup}{write}
-            \bitbox{16}{-} \bitbox{16}{length} \\
-            \bitbox{32}{data} \\
-            \bitbox{32}{data}
-        \end{rightwordgroup} \\
-        \bitbox{24}{-} \bitbox{8}{trailer (K28.4)} \\
-\end{bytefield}
-$$
+The SC command packet has the format as following:
+![SC Packet CMD!](./pictures/sc_packet_cmd.png "SC Packet Command")
+
+
