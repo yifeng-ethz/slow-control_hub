@@ -10,6 +10,7 @@
 -- 	Date: Jan 31, 2024
 -- Revision: 3.1 (fix minor bug to release the qsys read if terminated; add timeout for write)
 --		Date: Feb 13, 2024
+-- Revision: 3.2 (clean up ready signal to download)
 -- =========
 -- Description:	[Slow Control Hub] 
 	-- Acting as the Hub with two Avalon-MM Master port to interfacing the ports locally in this FPGA.
@@ -124,9 +125,9 @@ end entity sc_hub;
 
 architecture rtl of sc_hub is 
 
-	constant K285						: std_logic_vector(7 downto 0) := "10111100"; -- 8#BC#
-	constant K284						: std_logic_vector(7 downto 0) := "10011100"; -- 8#9C#
-	constant K237						: std_logic_vector(7 downto 0) := "11110111"; -- 8#F7#
+	constant K285						: std_logic_vector(7 downto 0) := "10111100"; -- 16#BC#
+	constant K284						: std_logic_vector(7 downto 0) := "10011100"; -- 16#9C#
+	constant K237						: std_logic_vector(7 downto 0) := "11110111"; -- 16#F7#
 	signal address_code				: std_logic_vector(15 downto 0);
 	signal qsys_addr 				: std_logic_vector(15 downto 0);
 	signal qsys_addr_vld			: std_logic;
@@ -157,18 +158,18 @@ architecture rtl of sc_hub is
 	signal rd_timeout_cnt							: std_logic_vector(15 downto 0);
 	
 	signal av_rd_cmd_send_done						: std_logic;
-		--attribute syn_keep of av_rd_cmd_send_done: signal is true;
 	
 	signal write_buff_ready							: std_logic;
 	signal write_buff_done							: std_logic;
 	signal wr_trans_done, rd_trans_done				: std_logic;
-	--signal single_write_avstart					: std_logic;
 	signal burst_write_avstart						: std_logic;
 	signal write_av_waitforcomp						: std_logic;
 	signal wr_trans_cnt, rd_trans_cnt				: std_logic_vector(7 downto 0);
 		
 	signal rd_ack_start								: std_logic;
 	signal read_ack_almostdone						: std_logic;
+    signal rd_response                              : std_logic_vector(1 downto 0); 
+    signal wr_response                              : std_logic_vector(1 downto 0);
 
 	signal rd_ack_word_cnt							: std_logic_vector(7 downto 0);
 
@@ -313,26 +314,28 @@ begin
 					if (isPreamble = '1') then
 						sc_hub_state	<= RECORD_HEADER;
 					end if;
+                    o_linkin_ready      <= '1'; -- accept new packet
 				when RECORD_HEADER =>
-					if (sc_pkt_info.sc_type(0)='0' and (isSkipWord='0')) then 
+					if (sc_pkt_info.sc_type(0)='0' and (isSkipWord = '0')) then 
 						sc_hub_state	<= RUNNING_READ;
 					elsif (not isSkipWord) then
 						sc_hub_state	<= RUNNING_WRITE;
 					else
 					end if;
 				when RUNNING_READ => 
-					if (not isSkipWord) then
+					if (record_length_done = '1' and (isSkipWord = '0')) then 
 						sc_hub_state	<= RUNNING_TRAILER;
+                        o_linkin_ready  <= '0'; -- stall new packet
 					end if;
 				when RUNNING_WRITE =>
-					if (record_length_done = '1' and to_integer(unsigned(wr_word_cnt)) = to_integer(unsigned(sc_pkt_info.rw_length)) and (isSkipWord='0')) then
+					if (record_length_done = '1' and to_integer(unsigned(wr_word_cnt)) = to_integer(unsigned(sc_pkt_info.rw_length)) and (isSkipWord = '0')) then
 						sc_hub_state	<= RUNNING_TRAILER;
-					else
-						sc_hub_state	<= RUNNING_WRITE;
+                        o_linkin_ready  <= '0'; -- stall new packet
 					end if;
 				-- this state should delay to cover the trailer for correct timing
 				when RUNNING_TRAILER =>
 					sc_hub_state	<= REPLY;
+                    
 				when REPLY =>
 					if (send_trailer_done = '1') then
 						sc_hub_state	<= RESET;
@@ -344,6 +347,7 @@ begin
 					if (sc_hub_reset_done = '1') then
 						sc_hub_state 	<= IDLE;
 					end if;
+                    o_linkin_ready      <= '0'; -- stall new packet
 				when others =>
 					sc_hub_state	<= RESET; 
 			end case;
@@ -365,13 +369,13 @@ begin
 						avm_m0_flush	<= '0';
 					end if;
 					ath_state						<= RESET;	
-					o_linkin_ready					<= '0';
+					--o_linkin_ready					<= '0';
 					read_trans_start				<= '0';
 					write_buff_ready				<= '0';
 					write_buff_done					<= '0';
 					ack_state						<= RESET;
 					sc_pkt_info.sc_type				<= (others=>'0');
-					sc_pkt_info.fpga_id				<= (others=>'0');
+					sc_pkt_info.fpga_id				<= std_logic_vector(to_unsigned(2,sc_pkt_info.fpga_id'length)); 
 					record_preamble_done			<= '0';
 					sc_pkt_info.start_address		<= (others=>'0');
 					sc_pkt_info.mask_m				<= '0';
@@ -388,12 +392,12 @@ begin
 					avm_m0_flush					<= '0';
 					ath_state						<= IDLE;
 					ack_state						<= IDLE;
-					o_linkin_ready					<= '1';
+					--o_linkin_ready					<= '1';
 					if (isPreamble = '1' and record_preamble_done = '0' and (isSkipWord='0')) then
 						sc_pkt_info.sc_type		<= i_linkin_data(25 downto 24);
 						sc_pkt_info.fpga_id		<= i_linkin_data(23 downto 8);
 						record_preamble_done		<= '1';
-						o_linkin_ready				<= '0';
+						-- o_linkin_ready				<= '0';
 					end if;
 				when RECORD_HEADER =>
 					if (record_head_done = '0' and (isSkipWord='0')) then 
@@ -439,6 +443,7 @@ begin
 						wr_fifo_wrreq			<= '0';
 					end if;
 				when RUNNING_TRAILER => 
+                    --o_linkin_ready      <= '0'; -- deassert the ready to stop new packet coming in
 					-- TODO: confirm the packet structure is correct
 				when REPLY =>
 					case ack_state is 
@@ -506,6 +511,8 @@ begin
 		end if;
 	end process proc_wr_fifo2avmm_logic;
 	
+    
+    -- talk to qsys as a master 
 	proc_read_write_trans : process(i_clk,i_rst)
 	begin
 		if (i_rst = '1') then
@@ -518,26 +525,42 @@ begin
 					avm_m0_address		<= conv_std_logic_vector(to_integer(unsigned(sc_pkt_info.start_address)), avm_m0_address'length);
 					avm_m0_burstcount	<= sc_pkt_info.rw_length(8 downto 0);
 					read_avstart		<= '1';
-					if (read_avstart = '1' and avm_m0_waitrequest = '1' and av_rd_cmd_send_done = '0') then
-						avm_m0_read			<= '1'; -- high for one cycle after read start
-					elsif (read_avstart = '1' and avm_m0_waitrequest = '0') then
+                    -- 1) post read command -> system
+                    avm_m0_read         <= '1'; 
+                    -- 2) command ack <- system
+					if (read_avstart = '1' and avm_m0_waitrequest = '0') then
 						avm_m0_read				<= '0';
 						av_rd_cmd_send_done		<= '1'; -- ack of the qsys that read command is sent
-					else 
-						avm_m0_read			<= '0';
 					end if;
+                    -- 3) stuck read signal to gnd as the command has been sent, because <hub.maximumPendingReadTransactions> = 1
+                    if (av_rd_cmd_send_done = '1') then 
+                        avm_m0_read         <= '0';
+                    end if;
 					if (to_integer(unsigned(rd_trans_cnt))	< to_integer(unsigned(sc_pkt_info.rw_length))) then
-						if (rd_fifo_full /= '1' and avm_m0_readdatavalid = '1') then -- read fifo captured
+						if (rd_fifo_full /= '1' and avm_m0_readdatavalid = '1') then -- qsys -> read fifo 
 							rd_trans_cnt		<= conv_std_logic_vector(to_integer(unsigned(rd_trans_cnt))+1, rd_trans_cnt'length);
 							rd_fifo_wrreq		<= '1';
-							rd_fifo_din			<= avm_m0_readdata;
-							rd_timeout_cnt		<= (others=>'0'); -- remember to feed to dog for each read word received
+                            -- --------------------------------------------------------
+                            -- mask the read data with in case of qsys error returned
+                            -- --------------------------------------------------------
+                            if (avm_m0_response = "11") then -- DECODEERROR
+                                rd_fifo_din         <= std_logic_vector(to_unsigned(16#DEADBEEF#,32)); -- wiki: On Sun Microsystems' Solaris, marks freed kernel memory
+                            elsif (avm_m0_response = "10") then -- SLAVEERROR
+                                rd_fifo_din         <= std_logic_vector(to_unsigned(16#BBADBEEF#,32)); -- wiki: "Bad beef", Used in WebKit, for particularly unrecoverable errors
+							else 
+                                rd_fifo_din			<= avm_m0_readdata;
+                            end if;
+                            rd_timeout_cnt		<= (others=>'0'); -- remember to feed to dog for each read word received
 						else -- halt for qsys to send the read word
 							rd_timeout_cnt		<= conv_std_logic_vector(to_integer(unsigned(rd_timeout_cnt))+1, rd_timeout_cnt'length);
 							rd_trans_cnt		<= rd_trans_cnt;
 							rd_fifo_wrreq		<= '0';
 							rd_fifo_din			<= (others=>'0');
 						end if;
+                        -- recv the response channel info ("00" : no error, "10" : SLAVEERROR, "11": DECODEERROR)
+                        if (avm_m0_readdatavalid = '1' and avm_m0_response /= "00") then
+                            rd_response         <= avm_m0_response;
+                        end if;
 						rd_trans_done		<= '0';
 					else
 						rd_fifo_wrreq		<= '0';
@@ -555,12 +578,17 @@ begin
 					burst_write_avstart	<= '1';
 					if (to_integer(unsigned(wr_trans_cnt)) < to_integer(unsigned(sc_pkt_info.rw_length))) then
 						if (wr_fifo_rdreq = '1') then -- counter for tracking the consumed words
-							wr_trans_cnt			<= conv_std_logic_vector(to_integer(unsigned(wr_trans_cnt))+1, wr_trans_cnt'length);
+							wr_trans_cnt		<= conv_std_logic_vector(to_integer(unsigned(wr_trans_cnt))+1, wr_trans_cnt'length);
 						end if; 
-						-- write timeout should be monitored outside of master with a seperate timeout bridge
-					else			
-						wr_trans_done						<= '1';					
+						-- write timeout should be monitored outside of master with a seperate timeout bridge	
+									
 					end if;
+                    -- recv the response channel info ("00" : no error, "10" : SLAVEERROR, "11": DECODEERROR)
+                    if (avm_m0_writeresponsevalid = '1') then
+                        wr_response         <= avm_m0_response;
+                        wr_trans_done		<= '1';		
+                    end if;
+                    
 				when RESET => 
 					avm_m0_read				<= '0';
 					read_avstart			<= '0';
@@ -577,6 +605,8 @@ begin
 					rd_fifo_sclr			<= '1';
 					rd_fifo_wrreq			<= '0';
 					rd_timeout_cnt			<= (others => '0');
+                    rd_response             <= (others => '0');
+                    wr_response             <= (others => '0');
 					if (wr_fifo_empty = '1') then
 						sc_hub_reset_done <= '1';
 					else
@@ -597,50 +627,58 @@ begin
 	
 -- === part 2: REPLYING the commands
 
+    -- dump qsys -> rdfifo -> upload packet (data section)
 	proc_rd_fifo2acklink_logic : process(all)
 	begin
+        -- default 
+        link_data_comb(31 downto 8)	<= (others => '0'); -- send comma word
+		link_data_comb(7 downto 0)		<= K285;
+		link_datak_comb					<= "0001";
+		link_en_comb					<= '0';	
+        -- logic (connects rdfifo q <-> link)
 		if (read_ack_flow = S2) then -- be mindful: this state is comb out!
 			if (to_integer(unsigned(rd_ack_word_cnt)) <= to_integer(unsigned(sc_pkt_info.rw_length))-1) then
 				if (rd_fifo_empty /= '1') then
+                    -- 1) in good transaction state
 					link_data_comb		<= rd_fifo_dout;
 					link_datak_comb		<= "0000";
 					link_en_comb		<= '1';				
-				else -- fifo underflow, error!
-					link_data_comb(31 downto 8)		<= (others => '0'); -- send comma word
-					link_data_comb(7 downto 0)		<= K237; -- send control error word
-					link_datak_comb					<= "0001";
-					link_en_comb					<= '1';			
+				else 
+                    -- 2) read fifo underflow, critical error, but we continue...
+					link_data_comb		<= std_logic_vector(to_unsigned(16#CCCCCCCC#,32)); -- wiki: Used by Microsoft's C++ debugging runtime library and many DOS environments to mark uninitialized stack memory.
+					link_datak_comb		<= "0000";
+					link_en_comb		<= '1';			
 				end if;
-			else -- send to link is finished as word count depleted (this should not be seen by the link)
-				link_data_comb(31 downto 8)		<= (others => '0'); -- send comma word
-				link_data_comb(7 downto 0)		<= K285;
-				link_datak_comb					<= "0001";
-				link_en_comb					<= '0';		
 			end if;
-		else -- when ack_state is not sending read words (this should not be seen by the link)
-			link_data_comb(31 downto 8)	<= (others => '0'); -- send comma word
-			link_data_comb(7 downto 0)		<= K285;
-			link_datak_comb					<= "0001";
-			link_en_comb					<= '0';	
 		end if;	
-		if (to_integer(unsigned(rd_ack_word_cnt)) = to_integer(unsigned(sc_pkt_info.rw_length))-1) then
-			-- almost finish read fifo
-			-- comb out of S2 which should push the timing one cycle earlier
-			if (rd_fifo_empty /= '1') then
-				read_ack_almostdone	<= '1';
-			else 
-				read_ack_almostdone	<= '0';
-			end if;
-		else
-			read_ack_almostdone	<= '0';
-		end if;
-	end process proc_rd_fifo2acklink_logic;
+        
+        -- alert almost done so the ack_state can do RD_ACK -> TRAILER the data has been read out from rd fifo
+        -- this alert is at the last word of the rd fifo, so no slack state is between RD_ACK and TRAILER to remove bubble in upload packet.
+        read_ack_almostdone	<= '0';
+        if (to_integer(unsigned(sc_pkt_info.rw_length)) = 1) then 
+            if (read_ack_flow = S2) then 
+                read_ack_almostdone     <= '1';
+            end if;
+        elsif (to_integer(unsigned(sc_pkt_info.rw_length)) > 1) then 
+            if (to_integer(unsigned(sc_pkt_info.rw_length)) - to_integer(unsigned(rd_ack_word_cnt)) <= 1) then 
+                read_ack_almostdone     <= '1';
+            end if;
+        end if;
+	end process;
 	
+    -- assemble slow control reply packet 
 	proc_ack_fsm_regs : process(i_clk,i_rst)
 	begin
 		if (i_rst = '1') then
 		
 		elsif rising_edge(i_clk) then 
+            -- default 
+            link_data           <= (others => '0');
+            link_datak          <= (others => '0');
+            link_en             <= '0';
+            link_eop            <= '0';
+            link_sop            <= '0';
+
 			case ack_state is
 				when PREAMBLE =>
 					link_eop					<= '0';
@@ -673,7 +711,7 @@ begin
 						when S1 =>
 							link_data(15 downto 0)		<= sc_pkt_info.rw_length;
 							link_data(16)				<= '1';
-							link_data(31 downto 17)		<= (others=>'0');
+							link_data(29 downto 28)     <= rd_response; -- highest byte
 							link_datak					<= "0000";
 							link_en						<= '1';
 							read_ack_flow				<= S2;
@@ -689,11 +727,7 @@ begin
 								-- almost finish read fifo
 								read_ack_flow	<= S2;
 								read_ack_done	<= '0';
-								if (rd_fifo_empty /= '1') then
-									rd_fifo_rdreq		<= '1';
-								else 
-									rd_fifo_rdreq		<= '0';
-								end if;
+								rd_fifo_rdreq	<= '1';
 							elsif (to_integer(unsigned(rd_ack_word_cnt)) > to_integer(unsigned(sc_pkt_info.rw_length))-1) then
 								-- finish read fifo
 								read_ack_flow	<= IDLE;
@@ -713,33 +747,29 @@ begin
 							link_en				<= '0';
 							rd_fifo_rdreq		<= '0';
 						when others => 
-							-- illegal state
-							-- do nothing, but fake read_ack_done to move on
-							link_en				<= '0';
-							rd_fifo_rdreq		<= '0';
-							read_ack_done		<= '0';
+							null;
 					end case;
 				when WR_ACK =>
 					if (send_write_reply_done = '0') then 
 						link_data(15 downto 0)		<= sc_pkt_info.rw_length;
-						link_data(16)					<= '1';
-						link_data(31 downto 17)		<= (others=>'0');
-						link_datak	<= "0000";
-						link_en		<= '1';
+						link_data(16)				<= '1';
+                        link_data(29 downto 28)     <= wr_response; -- highest byte
+						link_datak	                <= "0000";
+						link_en		                <= '1';
 						send_write_reply_done	<= '1';
 					elsif (send_write_reply_done = '1') then
 						link_en		<= '0'; -- toggle the link_en 
 					end if;
 				when TRAILER =>
 					if (send_trailer_done = '0') then
-						link_eop								<= '1';
-						link_data(7 downto 0)			<= K284;
-						link_data(31 downto 8)			<= (others=>'0');
+						link_eop							<= '1';
+						link_data(7 downto 0)			    <= K284;
+						link_data(31 downto 8)			    <= (others=>'0');
 						link_datak							<= "0001";
 						link_en								<= '1';
 						send_trailer_done					<= '1';
 					elsif (send_trailer_done = '1') then
-						link_eop								<= '0';
+						link_eop							<= '0';
 						link_en								<= '0'; -- toggle the link_en 
 					end if;
 				when RESET =>
