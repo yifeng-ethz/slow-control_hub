@@ -24,7 +24,7 @@ The **SC command packet** has the format as following:
 ![SC Packet CMD!](./pictures/sc_packet_cmd.png "SC Packet Command")
 
 The **SC reply (ack) packet** has the format as following:
-![SC Packet ACK!](./pictures/sc_packet_ack.png "SC Packet Reply")
+![SC Packet ACK!](./pictures/sc_ack_mod.png "SC Packet Reply")
 
 ## Slow-Control Hub IP Parameters
 
