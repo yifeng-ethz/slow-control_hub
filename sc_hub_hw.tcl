@@ -8,13 +8,15 @@
 ################################################
 package require qsys 
 
+# 25.0.0806 - fixed bug of burst read word index mismatch
+
 
 ################################################
 # module sc_hub
 ################################################
 set_module_property DESCRIPTION "Converts slow-control packet into system bus (Avalon Memory-Mapped) transactions"
 set_module_property NAME sc_hub
-set_module_property VERSION 24.0.1119
+set_module_property VERSION 25.0.0806
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Control Plane/Modules"

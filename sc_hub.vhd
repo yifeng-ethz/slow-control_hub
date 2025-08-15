@@ -11,6 +11,8 @@
 -- Revision: 3.1 (fix minor bug to release the qsys read if terminated; add timeout for write)
 --		Date: Feb 13, 2024
 -- Revision: 3.2 (clean up ready signal to download)
+-- Revision: 4.0 (fixed bug of burst read word index mismatch)
+-- 		Date: Aug 6, 2025
 -- =========
 -- Description:	[Slow Control Hub] 
 	-- Acting as the Hub with two Avalon-MM Master port to interfacing the ports locally in this FPGA.
@@ -296,10 +298,15 @@ begin
 			o_linkout_eop		<= '0';
 		elsif (rising_edge(i_clk)) then
 			o_linkout_data		<= link_data;
-			o_linkout_datak	<= link_datak;
+			o_linkout_datak		<= link_datak;
 			o_linkout_en		<= link_en;
 			o_linkout_sop		<= link_sop;
 			o_linkout_eop		<= link_eop;
+			if rd_fifo_rdreq then 
+				o_linkout_data			<= rd_fifo_dout;
+				o_linkout_datak			<= "0000";
+			end if;
+
 		end if;
 	end process proc_link_reg_out;
 
@@ -679,6 +686,7 @@ begin
             link_eop            <= '0';
             link_sop            <= '0';
 
+
 			case ack_state is
 				when PREAMBLE =>
 					link_eop					<= '0';
@@ -732,7 +740,7 @@ begin
 								-- finish read fifo
 								read_ack_flow	<= IDLE;
 								read_ack_done	<= '1';
-								rd_fifo_rdreq	<= '0';
+								--rd_fifo_rdreq	<= '0';
 							else 
 								-- reading fifo
 								read_ack_flow	<= S2;
@@ -761,6 +769,7 @@ begin
 						link_en		<= '0'; -- toggle the link_en 
 					end if;
 				when TRAILER =>
+					rd_fifo_rdreq			<= '0'; -- fix: shrink the rd_ack forward by 1 cycle
 					if (send_trailer_done = '0') then
 						link_eop							<= '1';
 						link_data(7 downto 0)			    <= K284;
@@ -800,6 +809,8 @@ begin
 					link_en				<= '0';
 					send_trailer_done	<= '1';
 			end case;
+			
+
 		end if;
 	end process proc_ack_fsm_regs;
 		
