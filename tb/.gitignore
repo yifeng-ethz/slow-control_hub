@@ -1,0 +1,6 @@
+modelsim.ini
+modelsim.ini.stale.*
+transcript
+tr_db.log
+work_sc_hub_tb/
+work_sc_hub_tb.stale.*/
