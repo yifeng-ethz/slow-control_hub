@@ -1,0 +1,8 @@
+buffers_intact,commands,effect,experiment,ext_last_reply_ns,final_ooo_ctrl,free_counts,int_first_reply_ns,int_max_latency_ns,mismatched_reads,mismatches,missing,ooo_reorders,passed,post_toggle_order,replies,unique_replies
+,,every reply carries the correct data despite out-of-order completion,OOO-C01,,,,,,,0,,7,1,,,
+,12,each command produces exactly one reply row,OOO-C02,,,,,,,,,,1,,12,12
+,,every admitted command eventually produces a reply,OOO-C03,,,,,,,,0,,1,,,
+1,,OoO payload use does not corrupt adjacent payload chains,OOO-C04,,,,,,0,,,,1,,,
+,,all payload RAM lines return to the free list after quiesce,OOO-C05,,,"512,64,512,64",,,,,,,1,,,
+,,reply ordering reverts to in-order after runtime OoO disable,OOO-C06,,0,,,,,,,,1,"5,6,7,8",,
+,,internal traffic bypasses slow external replies without starvation,OOO-C07,203.0,,,16.0,20.0,,,,,1,,,

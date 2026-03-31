@@ -1,0 +1,8 @@
+atomic_complete_ns,atomic_lock_avg_ns,effect,expected_old_value,expected_value,experiment,final_value,first_other_dispatch_ns,int_complete_ns,int_max_latency_ns,old_value,passed,response,sampled_reads
+,,non-atomic reads never observe a torn atomic update,,,ATOM-05,268436455,,,,,1,,100
+,21.805757596924725,internal CSR traffic stays reachable during heavy atomic locking,,,ATOM-06,,,,18.208963504849827,,1,,
+,,two atomic RMW operations to the same address preserve both updates,,2882343476,ATOM-C01,2882343476,,,,,1,,
+70.0,,no external transaction dispatches while the atomic lock is held,,,ATOM-C02,,70.0,,,,1,,
+85.0,,internal CSR accesses complete during the atomic lock window,,,ATOM-C03,,,13.0,,,1,,
+,,atomic write phase is skipped when the read phase errors,,,ATOM-C04,1592684664,,,,,1,SLVERR,
+,,atomic reply returns the original read value with the response code,2523365752,,ATOM-C05,,,,,2523365752,1,OK,
