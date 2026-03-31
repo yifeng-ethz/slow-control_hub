@@ -10,3 +10,4 @@ syn/quartus/db/
 syn/quartus/incremental_db/
 syn/quartus/output_files/
 syn/quartus/*.qws
+syn/quartus/a5_pin_model_dump.txt

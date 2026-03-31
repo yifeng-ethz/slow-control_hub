@@ -266,7 +266,11 @@ begin
                         bus_cmd_issued <= '0';
                         if (i_pkt_valid = '1' and hub_enable = '1') then
                             pkt_info_reg          <= i_pkt_info;
-                            reply_suppress_reg    <= '1' when pkt_reply_suppressed_func(i_pkt_info) else '0';
+                            if (pkt_reply_suppressed_func(i_pkt_info)) then
+                                reply_suppress_reg <= '1';
+                            else
+                                reply_suppress_reg <= '0';
+                            end if;
                             reply_is_internal_reg <= '0';
                             response_reg          <= SC_RSP_OK_CONST;
                             read_fill_index       <= (others => '0');
@@ -325,15 +329,23 @@ begin
                         status_word_v := (others => '0');
                         fifo_status_word_v := (others => '0');
 
-                        status_word_v(0) := '1' when (core_state /= IDLING) else '0';
+                        if (core_state /= IDLING) then
+                            status_word_v(0) := '1';
+                        else
+                            status_word_v(0) := '0';
+                        end if;
                         if (reply_is_internal_reg = '1' and offset_v = HUB_CSR_WO_STATUS_CONST) then
                             status_word_v(0) := '0';
                         end if;
-                        status_word_v(1) := '1' when (hub_err_flags /= std_logic_vector(to_unsigned(0, hub_err_flags'length))) else '0';
+                        if (hub_err_flags /= std_logic_vector(to_unsigned(0, hub_err_flags'length))) then
+                            status_word_v(1) := '1';
+                        else
+                            status_word_v(1) := '0';
+                        end if;
                         status_word_v(2) := i_dl_fifo_full;
                         status_word_v(3) := i_bp_full;
                         status_word_v(4) := hub_enable;
-                        status_word_v(5) := '1' when (i_bus_busy = '1') else '0';
+                        status_word_v(5) := i_bus_busy;
 
                         fifo_status_word_v(0) := i_dl_fifo_full;
                         fifo_status_word_v(1) := i_bp_full;
@@ -374,7 +386,11 @@ begin
                             when HUB_CSR_WO_FIFO_STATUS_CONST =>
                                 csr_word_v := fifo_status_word_v;
                             when HUB_CSR_WO_DOWN_PKT_CNT_CONST =>
-                                csr_word_v(0) := '1' when (core_state /= IDLING) else '0';
+                                if (core_state /= IDLING) then
+                                    csr_word_v(0) := '1';
+                                else
+                                    csr_word_v(0) := '0';
+                                end if;
                             when HUB_CSR_WO_UP_PKT_CNT_CONST =>
                                 csr_word_v(9 downto 0) := i_bp_pkt_count;
                             when HUB_CSR_WO_DOWN_USEDW_CONST =>
