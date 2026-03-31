@@ -1,0 +1,10 @@
+acquire_complete_ns,acquire_dispatch_ns,atomic_complete_ns,atomic_dispatch_ns,domains_checked,effect,expected_value,experiment,initial_reason,min_domain1_complete_ns,min_younger_complete_ns,min_younger_dispatch_ns,observed_value,older_complete_ns,passed,ready_after_older_complete,release_complete_ns,release_dispatch_ns,throughput_baseline,throughput_relaxed
+,,,,,younger same-domain traffic stays behind the release across ext/int paths,,ORD-C01,,,0.0,0.0,,,1,,0.0,,,
+,,,,,release drains all older writes to visible retirement before it issues,,ORD-C02,,,,,,216.0,1,,317.0,216.0,,
+67.0,,,,,acquire blocks both issue and completion of younger same-domain traffic,,ORD-C03,,,70.0,67.0,,,1,,,,,
+,37.0,,,,acquire observes state updated by the prior release in the same domain,2779077210,ORD-C04,,,,,2779077210,,1,,37.0,,,
+87.0,,,,,other domains continue while one domain is held behind an acquire,,ORD-C05,,13.0,,,,,1,,,,,
+,,101.0,37.0,,same-domain atomic waits behind the release boundary before taking the bus lock,,ORD-C06,,,,,,,1,,37.0,,,
+,,,,,release waits for accepted-but-not-yet-dispatched writes in the same domain,,ORD-I02A,ord_release_wait,,,,,,1,1,,,,
+,,,,,relaxed traffic sees zero modeled overhead from the ordering tracker,,ORD-I04,,,,,,,1,,,,124176481.83614999,124176481.83614999
+,,,,1,issued ord_epoch values remain monotonic within each domain,,ORD-I05,,,,,,,1,,,,,
