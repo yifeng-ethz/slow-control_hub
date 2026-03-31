@@ -1,0 +1,62 @@
+class sc_hub_uvm_env_cfg extends uvm_object;
+  `uvm_object_utils(sc_hub_uvm_env_cfg)
+
+  sc_hub_bus_e bus_type;
+  int unsigned rd_latency;
+  int unsigned wr_latency;
+  bit          keep_uplink_ready_high;
+  int unsigned sweep_iterations;
+  bit          enable_addr_sweep;
+  bit          enable_concurrent;
+  bit          enable_atomic;
+  bit          enable_ordering;
+  bit          enable_ooo;
+  bit          enable_perf;
+  bit          enable_mixed;
+  bit          enable_bp;
+  bit          enable_csr;
+  bit          enable_error;
+  int unsigned sweep_addr_start;
+  int unsigned sweep_addr_end;
+  int unsigned sweep_addr_step;
+  int unsigned sweep_rw_length;
+  int unsigned ordering_domain;
+  int unsigned ordering_epoch_start;
+  int unsigned ooo_issue_count;
+  int unsigned perf_burst_min;
+  int unsigned perf_burst_max;
+  int unsigned perf_burst_step;
+  int unsigned perf_repeat;
+  int unsigned sweep_idle_cycles;
+
+  function new(string name = "sc_hub_uvm_env_cfg");
+    super.new(name);
+    bus_type               = SC_HUB_BUS_AVALON;
+    rd_latency             = 1;
+    wr_latency             = 1;
+    keep_uplink_ready_high = 1'b1;
+    sweep_iterations       = 1;
+    enable_addr_sweep      = 1'b1;
+    enable_concurrent      = 1'b0;
+    enable_atomic          = 1'b0;
+    enable_ordering        = 1'b0;
+    enable_ooo             = 1'b0;
+    enable_perf            = 1'b0;
+    enable_mixed           = 1'b1;
+    enable_bp              = 1'b1;
+    enable_csr             = 1'b1;
+    enable_error           = 1'b0;
+    sweep_addr_start       = 24'h000040;
+    sweep_addr_end         = 24'h000500;
+    sweep_addr_step        = 4;
+    sweep_rw_length        = 4;
+    ordering_domain        = 1;
+    ordering_epoch_start   = 1;
+    ooo_issue_count        = 4;
+    perf_burst_min         = 2;
+    perf_burst_max         = 8;
+    perf_burst_step        = 2;
+    perf_repeat            = 1;
+    sweep_idle_cycles      = 16;
+  endfunction
+endclass

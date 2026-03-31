@@ -3,8 +3,8 @@
 # Yifeng Wang 2026.03.31
 #
 # Major revision: modular sc_hub v2 with internal CSR header in the canonical
-# IP tree, validated store-and-forward download path, and selectable AVMM/AXI4
-# master interface.
+# IP tree, validated store-and-forward download path, and an Avalon-MM
+# compatibility-facing master interface for existing systems.
 #
 # GUI modeled after the Intel-style Mu3e IP wrappers such as ring_buffer_cam
 # and histogram_statistics_v2.
@@ -15,7 +15,7 @@ package require -exact qsys 16.1
 set_module_property NAME sc_hub
 set_module_property DISPLAY_NAME "Slow Control Hub"
 set_module_property VERSION 26.2.0
-set_module_property DESCRIPTION "Modular slow-control hub with internal CSR window, validated store-and-forward write path, and selectable Avalon-MM or AXI4 master interface."
+set_module_property DESCRIPTION "Modular slow-control hub with internal CSR window, validated store-and-forward write path, and the live Avalon-MM compatibility boundary used by existing systems."
 set_module_property GROUP "Mu3e Control Plane/Modules"
 set_module_property AUTHOR "Yifeng Wang"
 set_module_property INTERNAL false
@@ -117,16 +117,16 @@ proc add_avmm_master_interface {} {
         set_interface_property hub_master writeWaitTime 0
         set_interface_property hub_master ENABLED true
 
-        add_interface_port hub_master avm_m0_address address Output 16
-        add_interface_port hub_master avm_m0_read read Output 1
-        add_interface_port hub_master avm_m0_readdata readdata Input 32
-        add_interface_port hub_master avm_m0_writeresponsevalid writeresponsevalid Input 1
-        add_interface_port hub_master avm_m0_response response Input 2
-        add_interface_port hub_master avm_m0_write write Output 1
-        add_interface_port hub_master avm_m0_writedata writedata Output 32
-        add_interface_port hub_master avm_m0_waitrequest waitrequest Input 1
-        add_interface_port hub_master avm_m0_readdatavalid readdatavalid Input 1
-        add_interface_port hub_master avm_m0_burstcount burstcount Output 9
+        add_interface_port hub_master avm_hub_address address Output 16
+        add_interface_port hub_master avm_hub_read read Output 1
+        add_interface_port hub_master avm_hub_readdata readdata Input 32
+        add_interface_port hub_master avm_hub_writeresponsevalid writeresponsevalid Input 1
+        add_interface_port hub_master avm_hub_response response Input 2
+        add_interface_port hub_master avm_hub_write write Output 1
+        add_interface_port hub_master avm_hub_writedata writedata Output 32
+        add_interface_port hub_master avm_hub_waitrequest waitrequest Input 1
+        add_interface_port hub_master avm_hub_readdatavalid readdatavalid Input 1
+        add_interface_port hub_master avm_hub_burstcount burstcount Output 9
     } err_msg]} {
         send_message error "add_avmm_master_interface failed: $err_msg"
     }
@@ -229,9 +229,9 @@ set_parameter_property DEBUG DESCRIPTION "Synthesizable debug verbosity level ex
 add_parameter BUS_TYPE STRING {AVALON}
 set_parameter_property BUS_TYPE DISPLAY_NAME "Master Bus Type"
 set_parameter_property BUS_TYPE UNITS None
-set_parameter_property BUS_TYPE ALLOWED_RANGES {"AVALON" "AXI4"}
+set_parameter_property BUS_TYPE ALLOWED_RANGES {"AVALON"}
 set_parameter_property BUS_TYPE HDL_PARAMETER false
-set_parameter_property BUS_TYPE DESCRIPTION "Selects the external master interface wrapper. Packet framing and CSR behavior remain the same for both bus types."
+set_parameter_property BUS_TYPE DESCRIPTION "Selects the external master interface wrapper. The current checked-in Platform Designer component is fixed to the Avalon-MM compatibility boundary."
 
 set TAB_CONFIG     "Configuration"
 set TAB_IDENTITY   "Identity"
@@ -246,7 +246,7 @@ add_display_item $TAB_CONFIG "Advanced" GROUP
 
 add_html_text "Overview" overview_html {<html><b>Function</b><br/>The slow-control hub terminates Mu3e slow-control packets, validates the full download command before any external write is issued, routes internal CSR accesses locally, and formats the reply packet on the uplink side. The download write boundary is now store-and-forward, so malformed write packets are dropped before they reach the external bus.</html>}
 add_display_item "Packet / Bus" BUS_TYPE parameter
-add_html_text "Packet / Bus" packet_bus_html {<html><b>Bus selection</b><br/>The hub can present either an Avalon-MM or an AXI4 master interface. The selected wrapper changes only the external bus boundary. The packet format, CSR map, and reply word-2 header format stay the same.</html>}
+add_html_text "Packet / Bus" packet_bus_html {<html><b>Bus selection</b><br/>This compatibility-facing <b>sc_hub</b> component is currently packaged with the Avalon-MM master boundary used by the live systems. The packet format, CSR map, and reply word-2 header format stay the same.</html>}
 add_display_item "Compatibility" BACKPRESSURE parameter
 add_display_item "Compatibility" SCHEDULER_USE_PKT_TRANSFER parameter
 add_display_item "Compatibility" INVERT_RD_SIG parameter
@@ -258,8 +258,8 @@ add_display_item "" $TAB_IDENTITY GROUP tab
 add_display_item $TAB_IDENTITY "Delivered Profile" GROUP
 add_display_item $TAB_IDENTITY "Versioning" GROUP
 
-add_html_text "Delivered Profile" identity_profile_html {<html><b>Delivered profile</b><br/>This sc_hub v2 release is packaged as <b>26.2.0</b>. It keeps the external packet framing and the CSR-visible reply header format from the live hub while moving the internal CSR implementation into the canonical IP tree and adding the selectable bus wrapper.</html>}
-add_html_text "Versioning" version_html {<html><b>Catalog version</b><br/>Platform Designer sees this component as <b>NAME=sc_hub</b>, <b>VERSION=26.2.0</b>.<br/><br/><b>Legacy coexistence</b><br/>A second `_hw.tcl` under <b>legacy/</b> keeps <b>NAME=sc_hub</b> with the legacy version stamp and source set so existing systems can keep their older implementation while the new wrapper is available from the same search path.</html>}
+add_html_text "Delivered Profile" identity_profile_html {<html><b>Delivered profile</b><br/>This sc_hub v2-compatible release is packaged as <b>26.2.0</b>. It keeps the external packet framing and the legacy Platform Designer interface names from the live hub while moving the internal CSR implementation into the canonical IP tree and removing the deprecated flush path.</html>}
+add_html_text "Versioning" version_html {<html><b>Catalog version</b><br/>Platform Designer sees this component as <b>NAME=sc_hub</b>, <b>VERSION=26.2.0</b>.<br/><br/><b>Legacy coexistence</b><br/>A second `_hw.tcl` under <b>legacy/</b> keeps <b>NAME=sc_hub</b> with the older version stamp and source set so existing systems can keep their prior implementation while the new compatibility wrapper is available from the same search path.</html>}
 
 add_display_item "" $TAB_INTERFACES GROUP tab
 add_display_item $TAB_INTERFACES "Clock / Reset" GROUP
@@ -268,7 +268,7 @@ add_display_item $TAB_INTERFACES "Master Bus" GROUP
 
 add_html_text "Clock / Reset" clock_html {<html><b>hub_clock</b> and <b>hub_reset</b><br/>Single synchronous domain for packet ingress, bus dispatch, reply formatting, and the internal CSR window.</html>}
 add_html_text "Packet Links" packet_html {<html><b>hub_sc_packet_downlink</b><br/>32-bit Mu3e slow-control packet sink with K-character sideband.<br/><br/><b>hub_sc_packet_uplink</b><br/>36-bit Avalon-ST source carrying the formatted reply packet. The reply FIFO provides backpressure decoupling from the bus and CSR execution path.</html>}
-add_html_text "Master Bus" master_html {<html><b>hub_master</b><br/>Created by the elaboration callback according to <b>BUS_TYPE</b>. The Avalon wrapper exports a single-burst Avalon-MM master. The AXI4 wrapper exports a single-outstanding INCR-burst master with 32-bit data beats.</html>}
+add_html_text "Master Bus" master_html {<html><b>hub_master</b><br/>Compatibility-facing Avalon-MM master boundary for the live systems. The deprecated <b>avm_m0_flush</b> signal is intentionally not present in this v2 datapath.</html>}
 
 add_display_item "" $TAB_REGMAP GROUP tab
 add_display_item $TAB_REGMAP "CSR Window" GROUP
@@ -289,9 +289,9 @@ add_interface hub_sc_packet_downlink conduit end
 set_interface_property hub_sc_packet_downlink associatedClock hub_clock
 set_interface_property hub_sc_packet_downlink associatedReset hub_reset
 set_interface_property hub_sc_packet_downlink ENABLED true
-add_interface_port hub_sc_packet_downlink i_linkin_data data Input 32
-add_interface_port hub_sc_packet_downlink i_linkin_datak datak Input 4
-add_interface_port hub_sc_packet_downlink o_linkin_ready ready Output 1
+add_interface_port hub_sc_packet_downlink i_download_data data Input 32
+add_interface_port hub_sc_packet_downlink i_download_datak datak Input 4
+add_interface_port hub_sc_packet_downlink o_download_ready ready Output 1
 
 add_interface hub_sc_packet_uplink avalon_streaming start
 set_interface_property hub_sc_packet_uplink associatedClock hub_clock
@@ -301,11 +301,11 @@ set_interface_property hub_sc_packet_uplink firstSymbolInHighOrderBits true
 set_interface_property hub_sc_packet_uplink maxChannel 0
 set_interface_property hub_sc_packet_uplink readyLatency 0
 set_interface_property hub_sc_packet_uplink ENABLED true
-add_interface_port hub_sc_packet_uplink aso_to_uplink_data data Output 36
-add_interface_port hub_sc_packet_uplink aso_to_uplink_valid valid Output 1
-add_interface_port hub_sc_packet_uplink aso_to_uplink_ready ready Input 1
-add_interface_port hub_sc_packet_uplink aso_to_uplink_startofpacket startofpacket Output 1
-add_interface_port hub_sc_packet_uplink aso_to_uplink_endofpacket endofpacket Output 1
+add_interface_port hub_sc_packet_uplink aso_upload_data data Output 36
+add_interface_port hub_sc_packet_uplink aso_upload_valid valid Output 1
+add_interface_port hub_sc_packet_uplink aso_upload_ready ready Input 1
+add_interface_port hub_sc_packet_uplink aso_upload_startofpacket startofpacket Output 1
+add_interface_port hub_sc_packet_uplink aso_upload_endofpacket endofpacket Output 1
 
 add_interface hub_master avalon start
 set_interface_property hub_master addressUnits WORDS
@@ -329,13 +329,13 @@ set_interface_property hub_master setupTime 0
 set_interface_property hub_master timingUnits Cycles
 set_interface_property hub_master writeWaitTime 0
 set_interface_property hub_master ENABLED true
-add_interface_port hub_master avm_m0_address address Output 16
-add_interface_port hub_master avm_m0_read read Output 1
-add_interface_port hub_master avm_m0_readdata readdata Input 32
-add_interface_port hub_master avm_m0_writeresponsevalid writeresponsevalid Input 1
-add_interface_port hub_master avm_m0_response response Input 2
-add_interface_port hub_master avm_m0_write write Output 1
-add_interface_port hub_master avm_m0_writedata writedata Output 32
-add_interface_port hub_master avm_m0_waitrequest waitrequest Input 1
-add_interface_port hub_master avm_m0_readdatavalid readdatavalid Input 1
-add_interface_port hub_master avm_m0_burstcount burstcount Output 9
+add_interface_port hub_master avm_hub_address address Output 16
+add_interface_port hub_master avm_hub_read read Output 1
+add_interface_port hub_master avm_hub_readdata readdata Input 32
+add_interface_port hub_master avm_hub_writeresponsevalid writeresponsevalid Input 1
+add_interface_port hub_master avm_hub_response response Input 2
+add_interface_port hub_master avm_hub_write write Output 1
+add_interface_port hub_master avm_hub_writedata writedata Output 32
+add_interface_port hub_master avm_hub_waitrequest waitrequest Input 1
+add_interface_port hub_master avm_hub_readdatavalid readdatavalid Input 1
+add_interface_port hub_master avm_hub_burstcount burstcount Output 9

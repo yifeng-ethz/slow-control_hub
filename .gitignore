@@ -2,3 +2,11 @@
 *.bak
 greybox_tmp/
 .qsys_edit/
+tlm/build/
+tlm/results/
+tlm/.venv/
+tlm/**/__pycache__/
+syn/quartus/db/
+syn/quartus/incremental_db/
+syn/quartus/output_files/
+syn/quartus/*.qws

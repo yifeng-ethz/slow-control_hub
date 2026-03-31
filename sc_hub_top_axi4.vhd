@@ -1,4 +1,4 @@
--- File name: sc_hub_top.vhd
+-- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
 -- Version : 26.2.9
@@ -12,7 +12,7 @@ use ieee.std_logic_1164.all;
 
 use work.sc_hub_pkg.all;
 
-entity sc_hub_top is
+entity sc_hub_top_axi4 is
     generic(
         BACKPRESSURE               : boolean := true;
         SCHEDULER_USE_PKT_TRANSFER : boolean := true;
@@ -30,20 +30,39 @@ entity sc_hub_top is
         aso_upload_ready            : in  std_logic;
         aso_upload_startofpacket    : out std_logic;
         aso_upload_endofpacket      : out std_logic;
-        avm_hub_address             : out std_logic_vector(15 downto 0);
-        avm_hub_read                : out std_logic;
-        avm_hub_readdata            : in  std_logic_vector(31 downto 0);
-        avm_hub_writeresponsevalid  : in  std_logic;
-        avm_hub_response            : in  std_logic_vector(1 downto 0);
-        avm_hub_write               : out std_logic;
-        avm_hub_writedata           : out std_logic_vector(31 downto 0);
-        avm_hub_waitrequest         : in  std_logic;
-        avm_hub_readdatavalid       : in  std_logic;
-        avm_hub_burstcount          : out std_logic_vector(8 downto 0)
+        m_axi_awid                  : out std_logic_vector(3 downto 0);
+        m_axi_awaddr                : out std_logic_vector(15 downto 0);
+        m_axi_awlen                 : out std_logic_vector(7 downto 0);
+        m_axi_awsize                : out std_logic_vector(2 downto 0);
+        m_axi_awburst               : out std_logic_vector(1 downto 0);
+        m_axi_awvalid               : out std_logic;
+        m_axi_awready               : in  std_logic;
+        m_axi_wdata                 : out std_logic_vector(31 downto 0);
+        m_axi_wstrb                 : out std_logic_vector(3 downto 0);
+        m_axi_wlast                 : out std_logic;
+        m_axi_wvalid                : out std_logic;
+        m_axi_wready                : in  std_logic;
+        m_axi_bid                   : in  std_logic_vector(3 downto 0);
+        m_axi_bresp                 : in  std_logic_vector(1 downto 0);
+        m_axi_bvalid                : in  std_logic;
+        m_axi_bready                : out std_logic;
+        m_axi_arid                  : out std_logic_vector(3 downto 0);
+        m_axi_araddr                : out std_logic_vector(15 downto 0);
+        m_axi_arlen                 : out std_logic_vector(7 downto 0);
+        m_axi_arsize                : out std_logic_vector(2 downto 0);
+        m_axi_arburst               : out std_logic_vector(1 downto 0);
+        m_axi_arvalid               : out std_logic;
+        m_axi_arready               : in  std_logic;
+        m_axi_rid                   : in  std_logic_vector(3 downto 0);
+        m_axi_rdata                 : in  std_logic_vector(31 downto 0);
+        m_axi_rresp                 : in  std_logic_vector(1 downto 0);
+        m_axi_rlast                 : in  std_logic;
+        m_axi_rvalid                : in  std_logic;
+        m_axi_rready                : out std_logic
     );
-end entity sc_hub_top;
+end entity sc_hub_top_axi4;
 
-architecture rtl of sc_hub_top is
+architecture rtl of sc_hub_top_axi4 is
     signal uplink_ready_int        : std_logic;
     signal download_ready_int      : std_logic;
     signal accept_new_pkt_int      : std_logic;
@@ -203,35 +222,54 @@ begin
         i_bus_timeout_pulse      => bus_timeout_pulse
     );
 
-    avmm_handler_inst : entity work.sc_hub_avmm_handler
+    axi4_handler_inst : entity work.sc_hub_axi4_handler
     port map(
-        i_clk                   => i_clk,
-        i_rst                   => i_rst or soft_reset_pulse,
-        i_cmd_valid             => bus_cmd_valid,
-        o_cmd_ready             => bus_cmd_ready,
-        i_cmd_is_read           => bus_cmd_is_read,
-        i_cmd_address           => bus_cmd_address,
-        i_cmd_length            => bus_cmd_length,
-        i_wr_data_valid         => bus_wr_data_valid,
-        i_wr_data               => bus_wr_data,
-        o_wr_data_ready         => bus_wr_data_ready,
-        o_rd_data_valid         => bus_rd_data_valid,
-        o_rd_data               => bus_rd_data,
-        o_rd_data_last          => open,
-        o_done                  => bus_done,
-        o_response              => bus_response,
-        o_busy                  => bus_busy,
-        o_timeout_pulse         => bus_timeout_pulse,
-        avm_hub_address         => avm_hub_address,
-        avm_hub_read            => avm_hub_read,
-        avm_hub_readdata        => avm_hub_readdata,
-        avm_hub_writeresponsevalid => avm_hub_writeresponsevalid,
-        avm_hub_response        => avm_hub_response,
-        avm_hub_write           => avm_hub_write,
-        avm_hub_writedata       => avm_hub_writedata,
-        avm_hub_waitrequest     => avm_hub_waitrequest,
-        avm_hub_readdatavalid   => avm_hub_readdatavalid,
-        avm_hub_burstcount      => avm_hub_burstcount
+        i_clk           => i_clk,
+        i_rst           => i_rst or soft_reset_pulse,
+        i_cmd_valid     => bus_cmd_valid,
+        o_cmd_ready     => bus_cmd_ready,
+        i_cmd_is_read   => bus_cmd_is_read,
+        i_cmd_address   => bus_cmd_address,
+        i_cmd_length    => bus_cmd_length,
+        i_wr_data_valid => bus_wr_data_valid,
+        i_wr_data       => bus_wr_data,
+        o_wr_data_ready => bus_wr_data_ready,
+        o_rd_data_valid => bus_rd_data_valid,
+        o_rd_data       => bus_rd_data,
+        o_rd_data_last  => open,
+        o_done          => bus_done,
+        o_response      => bus_response,
+        o_busy          => bus_busy,
+        o_timeout_pulse => bus_timeout_pulse,
+        m_axi_awid      => m_axi_awid,
+        m_axi_awaddr    => m_axi_awaddr,
+        m_axi_awlen     => m_axi_awlen,
+        m_axi_awsize    => m_axi_awsize,
+        m_axi_awburst   => m_axi_awburst,
+        m_axi_awvalid   => m_axi_awvalid,
+        m_axi_awready   => m_axi_awready,
+        m_axi_wdata     => m_axi_wdata,
+        m_axi_wstrb     => m_axi_wstrb,
+        m_axi_wlast     => m_axi_wlast,
+        m_axi_wvalid    => m_axi_wvalid,
+        m_axi_wready    => m_axi_wready,
+        m_axi_bid       => m_axi_bid,
+        m_axi_bresp     => m_axi_bresp,
+        m_axi_bvalid    => m_axi_bvalid,
+        m_axi_bready    => m_axi_bready,
+        m_axi_arid      => m_axi_arid,
+        m_axi_araddr    => m_axi_araddr,
+        m_axi_arlen     => m_axi_arlen,
+        m_axi_arsize    => m_axi_arsize,
+        m_axi_arburst   => m_axi_arburst,
+        m_axi_arvalid   => m_axi_arvalid,
+        m_axi_arready   => m_axi_arready,
+        m_axi_rid       => m_axi_rid,
+        m_axi_rdata     => m_axi_rdata,
+        m_axi_rresp     => m_axi_rresp,
+        m_axi_rlast     => m_axi_rlast,
+        m_axi_rvalid    => m_axi_rvalid,
+        m_axi_rready    => m_axi_rready
     );
 
     accept_new_pkt_int <= '1'

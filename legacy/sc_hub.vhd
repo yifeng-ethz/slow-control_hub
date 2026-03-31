@@ -1,8 +1,8 @@
 -- ------------------------------------------------------------------------------------------------------------------------------------------------------
 -- IP Name:         sc_hub [Slow Control Hub]
 -- Author:          Yifeng Wang (yifenwan@phys.ethz.ch)
--- Revision:        25.0.0806
--- Date:            Aug 6, 2025
+-- Revision:        26.0.0330
+-- Date:            Mar 30, 2026
 -- Description:     Slow Control Hub IP core for Mu3e experiment. Handle slow control commands from host and interface with NoC IPs
 --
 -- Revision history:
@@ -13,6 +13,8 @@
 -- 24.2.02133       Fix minor bug to release qsys read if terminated. add timeout for write
 -- 24.2.0220        Clean up ready signal to download
 -- 25.0.0806        Fixed bug of burst read word index mismatch
+-- 25.0.0809        Fixed read-side trailer handling with K28.5 bubbles between length and trailer
+-- 26.0.0330        Reissue the current hub in date-style versioning without changing its public interface
 --
 -- Mu3e Slow Control Packet Format:
 --
@@ -163,6 +165,7 @@ architecture rtl of sc_hub is
     signal wr_word_cnt          : std_logic_vector(7 downto 0);
     signal isPreamble           : std_logic;
     signal isSkipWord           : std_logic;
+    signal isTrailer            : std_logic;
     signal record_preamble_done : std_logic;
     signal record_head_done     : std_logic;
     signal record_length_done   : std_logic;
@@ -389,8 +392,8 @@ begin
                         sc_hub_state  <= RUNNING_WRITE;
                     end if;
                 when RUNNING_READ => 
-                    -- Wait for read length and validate
-                    if (record_length_done = '1' and (isSkipWord = '0')) then 
+                    -- Wait for the explicit trailer after the read-length word.
+                    if (record_length_done = '1' and isTrailer = '1') then 
                         sc_hub_state   <= RUNNING_TRAILER;
                         o_linkin_ready <= '0';    -- Stall new packet while processing
                     end if;
@@ -399,7 +402,7 @@ begin
                     -- Wait for write data and validate length
                     if (record_length_done = '1' and 
                         to_integer(unsigned(wr_word_cnt)) = to_integer(unsigned(sc_pkt_info.rw_length)) and 
-                        (isSkipWord = '0')) then
+                        isTrailer = '1') then
                         sc_hub_state   <= RUNNING_TRAILER;
                         o_linkin_ready <= '0';    -- Stall new packet while processing
                     end if;
@@ -466,6 +469,7 @@ begin
                     avm_m0_flush					<= '0';
                     ath_state						<= IDLE;
                     ack_state						<= IDLE;
+                    read_trans_start               <= '0';
                     --o_linkin_ready					<= '1';
                     if (isPreamble = '1' and record_preamble_done = '0' and (isSkipWord='0')) then
                         sc_pkt_info.sc_type		<= i_linkin_data(25 downto 24);
@@ -483,10 +487,11 @@ begin
                         record_head_done				<= '1';
                     end if;
                 when RUNNING_READ =>
+                    read_trans_start               <= '0';
                     if (isSkipWord='0') then
-                        read_trans_start		<= '1';
-                        ath_state				<= AV_RD;
                         if (record_length_done = '0') then
+                            read_trans_start		<= '1';
+                            ath_state				<= AV_RD;
                             sc_pkt_info.rw_length	<= i_linkin_data(15 downto 0);
                             record_length_done		<= '1';
                         end if;
@@ -598,17 +603,18 @@ begin
                     rd_fifo_sclr		<= '0';
                     avm_m0_address		<= conv_std_logic_vector(to_integer(unsigned(sc_pkt_info.start_address)), avm_m0_address'length);
                     avm_m0_burstcount	<= sc_pkt_info.rw_length(8 downto 0);
-                    read_avstart		<= '1';
-                    -- 1) post read command -> system
-                    avm_m0_read         <= '1'; 
-                    -- 2) command ack <- system
-                    if (read_avstart = '1' and avm_m0_waitrequest = '0') then
-                        avm_m0_read				<= '0';
-                        av_rd_cmd_send_done		<= '1'; -- ack of the qsys that read command is sent
-                    end if;
-                    -- 3) stuck read signal to gnd as the command has been sent, because <hub.maximumPendingReadTransactions> = 1
-                    if (av_rd_cmd_send_done = '1') then 
-                        avm_m0_read         <= '0';
+                    avm_m0_read         <= '0';
+                    if (av_rd_cmd_send_done = '0') then
+                        if (read_avstart = '0') then
+                            -- Arm the read one cycle before asserting avm_m0_read so
+                            -- address/burstcount are already stable when the command launches.
+                            read_avstart <= '1';
+                        else
+                            avm_m0_read <= '1';
+                            if (avm_m0_waitrequest = '0') then
+                                av_rd_cmd_send_done <= '1'; -- ack of the qsys that read command is sent
+                            end if;
+                        end if;
                     end if;
                     if (to_integer(unsigned(rd_trans_cnt))	< to_integer(unsigned(sc_pkt_info.rw_length))) then
                         if (rd_fifo_full /= '1' and avm_m0_readdatavalid = '1') then -- qsys -> read fifo 
@@ -900,6 +906,14 @@ begin
             isSkipWord	<= '0';
         end if;
     end process proc_skip_word_det;
+
+    proc_trailer_det : process(all)
+    begin
+        if (i_linkin_data(7 downto 0) = K284 and i_linkin_datak = "0001") then
+            isTrailer <= '1';
+        else
+            isTrailer <= '0';
+        end if;
+    end process proc_trailer_det;
     
 end architecture rtl;
-
