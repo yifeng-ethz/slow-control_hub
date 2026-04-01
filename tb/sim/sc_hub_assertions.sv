@@ -11,6 +11,8 @@ module sc_hub_assertions (
   input logic uplink_eop
 `ifdef SC_HUB_BUS_AXI4
   ,
+  input logic        axi_rd_done,
+  input logic [3:0]  axi_rd_done_tag,
   input logic [3:0]  axi_awid,
   input logic [15:0] axi_awaddr,
   input logic [7:0]  axi_awlen,
@@ -70,11 +72,10 @@ module sc_hub_assertions (
   logic       axi4_r_fire;
   logic       axi4_b_fire;
   logic [8:0] write_beats_remaining;
-  logic [8:0] read_beats_remaining;
   logic       write_txn_inflight;
-  logic       read_txn_inflight;
   logic       write_last_seen;
-  logic       read_last_seen;
+  logic [8:0] read_beats_remaining [0:15];
+  logic       read_txn_inflight    [0:15];
   int unsigned axi_protocol_violations;
 
   assign axi4_aw_fire = axi_awvalid && axi_awready;
@@ -82,6 +83,15 @@ module sc_hub_assertions (
   assign axi4_w_fire  = axi_wvalid && axi_wready;
   assign axi4_r_fire  = axi_rvalid && axi_rready;
   assign axi4_b_fire  = axi_bvalid && axi_bready;
+
+  function automatic bit any_read_txn_inflight();
+    for (int unsigned idx = 0; idx < 16; idx++) begin
+      if (read_txn_inflight[idx]) begin
+        return 1'b1;
+      end
+    end
+    return 1'b0;
+  endfunction
 `endif
 
   // A01-A05 and A09-A17 are protocol-level checks and can be enforced
@@ -239,15 +249,16 @@ module sc_hub_assertions (
   always_ff @(posedge clk) begin
     if (rst) begin
       write_beats_remaining <= 9'd0;
-      read_beats_remaining  <= 9'd0;
       write_txn_inflight    <= 1'b0;
-      read_txn_inflight     <= 1'b0;
       write_last_seen       <= 1'b0;
-      read_last_seen        <= 1'b0;
       axi_protocol_violations <= 0;
+      for (int unsigned idx = 0; idx < 16; idx++) begin
+        read_beats_remaining[idx] <= 9'd0;
+        read_txn_inflight[idx]    <= 1'b0;
+      end
     end else begin
       if (axi4_aw_fire) begin
-        if (write_txn_inflight || read_txn_inflight) begin
+        if (write_txn_inflight || any_read_txn_inflight()) begin
           axi_protocol_violations <= axi_protocol_violations + 1;
         end
         write_beats_remaining <= {1'b0, axi_awlen} + 9'd1;
@@ -272,21 +283,25 @@ module sc_hub_assertions (
       end
 
       if (axi4_r_fire) begin
-        if (!read_txn_inflight) begin
+        if (!read_txn_inflight[axi_rid]) begin
           axi_protocol_violations <= axi_protocol_violations + 1;
         end else begin
-          if (axi_rlast != (read_beats_remaining == 9'd1)) begin
+          if (axi_rlast != (read_beats_remaining[axi_rid] == 9'd1)) begin
             axi_protocol_violations <= axi_protocol_violations + 1;
           end
-          if (read_beats_remaining > 0) begin
-            read_beats_remaining <= read_beats_remaining - 9'd1;
+          if (read_beats_remaining[axi_rid] > 0) begin
+            read_beats_remaining[axi_rid] <= read_beats_remaining[axi_rid] - 9'd1;
           end
-          if (axi4_r_fire && axi_rlast) begin
-            read_last_seen       <= 1'b1;
-            read_txn_inflight    <= 1'b0;
-            read_beats_remaining <= 9'd0;
+          if (axi_rlast) begin
+            read_txn_inflight[axi_rid]    <= 1'b0;
+            read_beats_remaining[axi_rid] <= 9'd0;
           end
         end
+      end
+
+      if (axi_rd_done) begin
+        read_txn_inflight[axi_rd_done_tag]    <= 1'b0;
+        read_beats_remaining[axi_rd_done_tag] <= 9'd0;
       end
 
       if (axi4_b_fire) begin
@@ -299,19 +314,18 @@ module sc_hub_assertions (
       end
 
       if (axi4_ar_fire) begin
-        if (write_txn_inflight || read_txn_inflight) begin
+        if (write_txn_inflight || read_txn_inflight[axi_arid]) begin
           axi_protocol_violations <= axi_protocol_violations + 1;
         end
-        read_beats_remaining <= {1'b0, axi_arlen} + 9'd1;
-        read_txn_inflight    <= 1'b1;
-        read_last_seen       <= 1'b0;
+        read_beats_remaining[axi_arid] <= {1'b0, axi_arlen} + 9'd1;
+        read_txn_inflight[axi_arid]    <= 1'b1;
       end
     end
   end
 
   property axi4_arvalid_stable;
     @(posedge clk) disable iff (rst)
-      (axi_arvalid && !axi_arready) |-> (axi_arvalid &&
+      (axi_arvalid && !axi_arready) |=> (axi_arvalid &&
         axi_arid === $past(axi_arid) &&
         axi_araddr === $past(axi_araddr) &&
         axi_arsize === $past(axi_arsize) &&
@@ -321,7 +335,7 @@ module sc_hub_assertions (
 
   property axi4_awvalid_stable;
     @(posedge clk) disable iff (rst)
-      (axi_awvalid && !axi_awready) |-> (axi_awvalid &&
+      (axi_awvalid && !axi_awready) |=> (axi_awvalid &&
         axi_awid === $past(axi_awid) &&
         axi_awaddr === $past(axi_awaddr) &&
         axi_awsize === $past(axi_awsize) &&
@@ -331,7 +345,7 @@ module sc_hub_assertions (
 
   property axi4_wvalid_stable;
     @(posedge clk) disable iff (rst)
-      (axi_wvalid && !axi_wready) |-> (axi_wvalid &&
+      (axi_wvalid && !axi_wready) |=> (axi_wvalid &&
         axi_wdata === $past(axi_wdata) &&
         axi_wstrb === $past(axi_wstrb) &&
         axi_wlast === $past(axi_wlast));
@@ -356,12 +370,12 @@ module sc_hub_assertions (
 
   property axi4_no_interleave;
     @(posedge clk) disable iff (rst)
-      axi4_aw_fire |-> !read_txn_inflight && !write_txn_inflight;
+      axi4_aw_fire |-> !any_read_txn_inflight() && !write_txn_inflight;
   endproperty
 
-  property axi4_no_interleave_rd;
+  property axi4_no_reuse_arid;
     @(posedge clk) disable iff (rst)
-      axi4_ar_fire |-> !write_txn_inflight && !read_txn_inflight;
+      axi4_ar_fire |-> !write_txn_inflight && !read_txn_inflight[axi_arid];
   endproperty
 
   property axi4_no_parallel_aw_ar;
@@ -390,8 +404,8 @@ module sc_hub_assertions (
   assert property (axi4_no_interleave)
     else $error("sc_hub_assertions: AW issued while prior transaction is in-flight");
 
-  assert property (axi4_no_interleave_rd)
-    else $error("sc_hub_assertions: AR issued while prior transaction is in-flight");
+  assert property (axi4_no_reuse_arid)
+    else $error("sc_hub_assertions: ARID reused while prior transaction with same ID is in-flight");
 
   assert property (axi4_no_parallel_aw_ar)
     else $error("sc_hub_assertions: AW and AR issued in same cycle");

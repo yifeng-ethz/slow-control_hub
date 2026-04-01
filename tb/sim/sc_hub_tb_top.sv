@@ -88,6 +88,9 @@ module sc_hub_tb_top;
   logic [1:0] axi_last_bresp;
   logic [1:0] axi_last_rresp;
   logic       axi_w_before_aw_violation;
+  logic [3:0] axi_arid_log[$];
+  logic [15:0] axi_araddr_log[$];
+  logic [3:0] axi_rid_log[$];
 `endif
 
   sc_reply_t captured_reply;
@@ -210,12 +213,21 @@ module sc_hub_tb_top;
     input  int unsigned word_count,
     output sc_reply_t   timeout_reply
   );
+`ifdef SC_HUB_BUS_AXI4
+    force axi4_bfm_inst.rvalid = 1'b0;
+    force axi4_bfm_inst.rlast  = 1'b0;
+    driver_inst.send_read(start_address, word_count);
+    monitor_inst.wait_reply(timeout_reply);
+    release axi4_bfm_inst.rvalid;
+    release axi4_bfm_inst.rlast;
+`else
     force avm_readdatavalid = 1'b0;
     force avm_response      = 2'b00;
     driver_inst.send_read(start_address, word_count);
     monitor_inst.wait_reply(timeout_reply);
     release avm_readdatavalid;
     release avm_response;
+`endif
   endtask
 
   task automatic fill_write_words(
@@ -264,6 +276,35 @@ module sc_hub_tb_top;
   task automatic wait_clks(input int unsigned cycle_count);
     repeat (cycle_count) @(posedge clk);
   endtask
+
+`ifdef SC_HUB_BUS_AXI4
+  task automatic reset_axi4_rd_latencies(input int unsigned default_latency = 1);
+    axi4_bfm_inst.set_default_rd_latency(default_latency);
+  endtask
+
+  task automatic set_axi4_rd_latency(
+    input logic [23:0] start_address,
+    input int unsigned latency
+  );
+    axi4_bfm_inst.set_rd_latency_for_addr(start_address[15:0], latency);
+  endtask
+
+  task automatic write_ooo_ctrl(input bit enable_ooo);
+    write_csr_word(16'h018, {31'd0, enable_ooo});
+  endtask
+
+  task automatic collect_replies(
+    input  int unsigned count,
+    output sc_reply_t   replies[0:15]
+  );
+    for (int unsigned idx = 0; idx < 16; idx++) begin
+      replies[idx] = make_empty_reply();
+    end
+    for (int unsigned idx = 0; idx < count; idx++) begin
+      monitor_inst.wait_reply(replies[idx]);
+    end
+  endtask
+`endif
 
   task automatic pulse_reset(input int unsigned cycle_count);
     inject_rd_error     <= 1'b0;
@@ -401,25 +442,49 @@ module sc_hub_tb_top;
     cmd = make_cmd(SC_WRITE, 24'h000000, 16);
 
     driver_inst.drive_word(make_preamble_word(cmd), 4'b0001);
+`ifdef SC_HUB_BUS_AXI4
+    if (axi_aw_count != 0 || axi_w_count != 0) begin
+      $error("sc_hub_tb_top: AXI4 activity observed during write preamble phase");
+    end
+`else
     if (avm_write !== 1'b0) begin
       $error("sc_hub_tb_top: AVMM write asserted during write preamble phase");
     end
+`endif
 
     driver_inst.drive_word(make_addr_word(cmd), 4'b0000);
+`ifdef SC_HUB_BUS_AXI4
+    if (axi_aw_count != 0 || axi_w_count != 0) begin
+      $error("sc_hub_tb_top: AXI4 activity observed during write address phase");
+    end
+`else
     if (avm_write !== 1'b0) begin
       $error("sc_hub_tb_top: AVMM write asserted during write address phase");
     end
+`endif
 
     driver_inst.drive_word(make_length_word(cmd), 4'b0000);
+`ifdef SC_HUB_BUS_AXI4
+    if (axi_aw_count != 0 || axi_w_count != 0) begin
+      $error("sc_hub_tb_top: AXI4 activity observed during write length phase");
+    end
+`else
     if (avm_write !== 1'b0) begin
       $error("sc_hub_tb_top: AVMM write asserted during write length phase");
     end
+`endif
 
     for (int unsigned idx = 0; idx < wr_words.size(); idx++) begin
       driver_inst.drive_word(wr_words[idx], 4'b0000);
+`ifdef SC_HUB_BUS_AXI4
+      if (axi_aw_count != 0 || axi_w_count != 0) begin
+        $error("sc_hub_tb_top: AXI4 activity observed before trailer at beat %0d", idx);
+      end
+`else
       if (avm_write !== 1'b0) begin
         $error("sc_hub_tb_top: AVMM write asserted before trailer at beat %0d", idx);
       end
+`endif
     end
 
     driver_inst.drive_word({24'h0, K284_CONST}, 4'b0001);
@@ -796,9 +861,15 @@ module sc_hub_tb_top;
 
         repeat (8) begin
           @(posedge clk);
+`ifdef SC_HUB_BUS_AXI4
+          if (axi_ar_count != 0) begin
+            saw_bus_read_before_trailer = 1'b1;
+          end
+`else
           if (avm_read == 1'b1) begin
             saw_bus_read_before_trailer = 1'b1;
           end
+`endif
         end
 
         if (!saw_bus_read_before_trailer) begin
@@ -1204,6 +1275,9 @@ module sc_hub_tb_top;
   task automatic run_t058();
     driver_inst.send_read(csr_addr(16'h018), 1);
     monitor_inst.wait_reply(captured_reply);
+`ifdef SC_HUB_BUS_AXI4
+    expect_single_word_reply(captured_reply, csr_addr(16'h018), 32'h0000_0000);
+`else
     if (!captured_reply.header_valid || captured_reply.echoed_length != 16'd1 ||
         captured_reply.response != 2'b10 || captured_reply.payload_words != 1 ||
         captured_reply.payload[0] !== 32'hEEEE_EEEE) begin
@@ -1214,6 +1288,7 @@ module sc_hub_tb_top;
              captured_reply.payload_words,
              captured_reply.payload[0]);
     end
+`endif
   endtask
 
   task automatic run_t059();
@@ -1367,6 +1442,16 @@ module sc_hub_tb_top;
         beat_count = 0;
         forever begin
           @(posedge clk);
+`ifdef SC_HUB_BUS_AXI4
+          if (axi_rvalid == 1'b1 && axi_rready == 1'b1) begin
+            beat_count++;
+            if (beat_count >= 4) begin
+              force axi4_bfm_inst.rvalid = 1'b0;
+              force axi4_bfm_inst.rlast  = 1'b0;
+              disable force_timeout_after_four_beats;
+            end
+          end
+`else
           if (avm_readdatavalid == 1'b1) begin
             beat_count++;
             if (beat_count >= 4) begin
@@ -1374,6 +1459,7 @@ module sc_hub_tb_top;
               disable force_timeout_after_four_beats;
             end
           end
+`endif
         end
       end
       begin
@@ -1381,7 +1467,12 @@ module sc_hub_tb_top;
         monitor_inst.wait_reply(partial_reply);
       end
     join
+`ifdef SC_HUB_BUS_AXI4
+    release axi4_bfm_inst.rvalid;
+    release axi4_bfm_inst.rlast;
+`else
     release avm_readdatavalid;
+`endif
 
     if (!partial_reply.header_valid || partial_reply.echoed_length != 16'd8 ||
         partial_reply.response != 2'b11 || partial_reply.payload_words != 8) begin
@@ -1866,8 +1957,8 @@ module sc_hub_tb_top;
   task automatic run_t084();
     fork
       begin
-        wait (axi_arvalid === 1'b1);
         force axi4_bfm_inst.arready = 1'b0;
+        wait (axi_arvalid === 1'b1);
         wait_clks(50);
         release axi4_bfm_inst.arready;
       end
@@ -1939,6 +2030,374 @@ module sc_hub_tb_top;
       $error("sc_hub_tb_top: AXI4 AWREADY stall caused AW handshake count mismatch exp=1 act=%0d",
              axi_aw_count);
     end
+  endtask
+
+  task automatic run_t210();
+    sc_reply_t replies[0:15];
+    int pos_b;
+    int pos_c;
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    set_axi4_rd_latency(24'h001000, 2);
+    set_axi4_rd_latency(24'h001010, 50);
+    set_axi4_rd_latency(24'h001020, 2);
+    set_axi4_rd_latency(24'h001030, 50);
+
+    driver_inst.send_read(24'h001000, 4);
+    driver_inst.send_read(24'h001010, 4);
+    driver_inst.send_read(24'h001020, 4);
+    driver_inst.send_read(24'h001030, 4);
+    collect_replies(4, replies);
+
+    pos_b = -1;
+    pos_c = -1;
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      case (replies[idx].start_address)
+        24'h001000: expect_read_reply(replies[idx], 24'h001000, 4);
+        24'h001010: begin
+          expect_read_reply(replies[idx], 24'h001010, 4);
+          pos_b = idx;
+        end
+        24'h001020: begin
+          expect_read_reply(replies[idx], 24'h001020, 4);
+          pos_c = idx;
+        end
+        24'h001030: expect_read_reply(replies[idx], 24'h001030, 4);
+        default: $error("sc_hub_tb_top: unexpected reply address in T210 addr=0x%06h",
+                        replies[idx].start_address);
+      endcase
+    end
+
+    if (pos_b < 0 || pos_c < 0 || pos_c > pos_b) begin
+      $error("sc_hub_tb_top: T210 expected fast read C to retire before slow read B (posC=%0d posB=%0d)",
+             pos_c, pos_b);
+    end
+  endtask
+
+  task automatic run_t211();
+    sc_reply_t replies[0:15];
+    bit seen[0:7];
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      set_axi4_rd_latency(24'h001100 + idx * 16, (idx % 2) ? 40 : 2);
+      driver_inst.send_read(24'h001100 + idx * 16, 1);
+      seen[idx] = 1'b0;
+    end
+    collect_replies(8, replies);
+
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      int match_idx;
+      match_idx = -1;
+      for (int unsigned exp_idx = 0; exp_idx < 8; exp_idx++) begin
+        if (replies[idx].start_address == (24'h001100 + exp_idx * 16)) begin
+          match_idx = exp_idx;
+        end
+      end
+      if (match_idx < 0) begin
+        $error("sc_hub_tb_top: T211 unexpected reply address addr=0x%06h", replies[idx].start_address);
+      end else begin
+        if (seen[match_idx]) begin
+          $error("sc_hub_tb_top: T211 duplicate reply for addr=0x%06h", replies[idx].start_address);
+        end
+        seen[match_idx] = 1'b1;
+        expect_read_reply(replies[idx], 24'h001100 + match_idx * 16, 1);
+      end
+    end
+
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      if (!seen[idx]) begin
+        $error("sc_hub_tb_top: T211 missing reply for addr=0x%06h", 24'h001100 + idx * 16);
+      end
+    end
+  endtask
+
+  task automatic run_t212();
+    sc_reply_t replies[0:15];
+    bit seen_read[0:7];
+    bit seen_write[0:3];
+    logic [31:0] wr_words[$];
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      set_axi4_rd_latency(24'h001200 + idx * 16, (idx % 2) ? 35 : 2);
+      driver_inst.send_read(24'h001200 + idx * 16, 1);
+      seen_read[idx] = 1'b0;
+    end
+
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      wr_words.delete();
+      wr_words.push_back(32'hD212_0000 + idx);
+      driver_inst.send_write(24'h001280 + idx * 4, 1, wr_words);
+      seen_write[idx] = 1'b0;
+    end
+
+    collect_replies(12, replies);
+
+    for (int unsigned idx = 0; idx < 12; idx++) begin
+      if (replies[idx].start_address >= 24'h001200 && replies[idx].start_address < 24'h001280) begin
+        int read_idx;
+        read_idx = (replies[idx].start_address - 24'h001200) / 16;
+        if (seen_read[read_idx]) begin
+          $error("sc_hub_tb_top: T212 duplicate read reply addr=0x%06h", replies[idx].start_address);
+        end
+        seen_read[read_idx] = 1'b1;
+        expect_read_reply(replies[idx], 24'h001200 + read_idx * 16, 1);
+      end else if (replies[idx].start_address >= 24'h001280 && replies[idx].start_address < 24'h001290) begin
+        int write_idx;
+        write_idx = (replies[idx].start_address - 24'h001280) / 4;
+        if (seen_write[write_idx]) begin
+          $error("sc_hub_tb_top: T212 duplicate write reply addr=0x%06h", replies[idx].start_address);
+        end
+        seen_write[write_idx] = 1'b1;
+        expect_write_reply(replies[idx], 24'h001280 + write_idx * 4, 1);
+        if (axi4_bfm_inst.mem[(24'h001280 + write_idx * 4) & 16'hFFFF] !== 32'hD212_0000 + write_idx) begin
+          $error("sc_hub_tb_top: T212 write payload mismatch addr=0x%06h", 24'h001280 + write_idx * 4);
+        end
+      end else begin
+        $error("sc_hub_tb_top: T212 unexpected reply address addr=0x%06h", replies[idx].start_address);
+      end
+    end
+
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      if (!seen_read[idx]) begin
+        $error("sc_hub_tb_top: T212 missing read reply addr=0x%06h", 24'h001200 + idx * 16);
+      end
+    end
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      if (!seen_write[idx]) begin
+        $error("sc_hub_tb_top: T212 missing write reply addr=0x%06h", 24'h001280 + idx * 4);
+      end
+    end
+  endtask
+
+  task automatic run_t213();
+    sc_reply_t replies[0:15];
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    set_axi4_rd_latency(24'h001300, 50);
+    set_axi4_rd_latency(24'h001340, 2);
+    set_axi4_rd_latency(24'h001380, 35);
+    set_axi4_rd_latency(24'h0013C0, 2);
+
+    driver_inst.send_read(24'h001300, 32);
+    driver_inst.send_read(24'h001340, 16);
+    driver_inst.send_read(24'h001380, 8);
+    driver_inst.send_read(24'h0013C0, 4);
+    collect_replies(4, replies);
+
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      case (replies[idx].start_address)
+        24'h001300: expect_read_reply(replies[idx], 24'h001300, 32);
+        24'h001340: expect_read_reply(replies[idx], 24'h001340, 16);
+        24'h001380: expect_read_reply(replies[idx], 24'h001380, 8);
+        24'h0013C0: expect_read_reply(replies[idx], 24'h0013C0, 4);
+        default: $error("sc_hub_tb_top: T213 unexpected reply address addr=0x%06h",
+                        replies[idx].start_address);
+      endcase
+    end
+  endtask
+
+  task automatic run_t214();
+    sc_reply_t replies[0:15];
+    bit saw_id[0:3];
+
+    // The live RTL uses slot-based reply storage rather than the planned
+    // linked-list payload pools. This check validates slot reclamation at quiesce.
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    for (int unsigned idx = 0; idx < 12; idx++) begin
+      set_axi4_rd_latency(24'h001400 + idx * 8, (idx % 3 == 0) ? 25 : 2);
+      driver_inst.send_read(24'h001400 + idx * 8, 1);
+    end
+    collect_replies(12, replies);
+
+    axi_arid_log.delete();
+    axi_araddr_log.delete();
+    axi_rid_log.delete();
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      saw_id[idx] = 1'b0;
+      driver_inst.send_read(24'h001500 + idx * 8, 1);
+    end
+    collect_replies(4, replies);
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      expect_read_reply(replies[idx], 24'h001500 + idx * 8, 1);
+    end
+    for (int unsigned idx = 0; idx < axi_arid_log.size(); idx++) begin
+      if (axi_arid_log[idx] < 4) begin
+        saw_id[axi_arid_log[idx]] = 1'b1;
+      end
+    end
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      if (!saw_id[idx]) begin
+        $error("sc_hub_tb_top: T214 expected slot/ARID %0d to be reusable after quiesce", idx);
+      end
+    end
+  endtask
+
+  task automatic run_t215();
+    sc_reply_t replies[0:15];
+    int phase1_pos_b;
+    int phase1_pos_c;
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    set_axi4_rd_latency(24'h001600, 2);
+    set_axi4_rd_latency(24'h001610, 50);
+    set_axi4_rd_latency(24'h001620, 2);
+    set_axi4_rd_latency(24'h001630, 50);
+    driver_inst.send_read(24'h001600, 1);
+    driver_inst.send_read(24'h001610, 1);
+    driver_inst.send_read(24'h001620, 1);
+    driver_inst.send_read(24'h001630, 1);
+    collect_replies(4, replies);
+
+    phase1_pos_b = -1;
+    phase1_pos_c = -1;
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      if (replies[idx].start_address == 24'h001610) phase1_pos_b = idx;
+      if (replies[idx].start_address == 24'h001620) phase1_pos_c = idx;
+    end
+    if (phase1_pos_b < 0 || phase1_pos_c < 0 || phase1_pos_c > phase1_pos_b) begin
+      $error("sc_hub_tb_top: T215 phase1 did not exhibit OoO ordering (C=%0d B=%0d)",
+             phase1_pos_c, phase1_pos_b);
+    end
+
+    write_ooo_ctrl(1'b0);
+    set_axi4_rd_latency(24'h001680, 2);
+    set_axi4_rd_latency(24'h001690, 50);
+    set_axi4_rd_latency(24'h0016A0, 2);
+    set_axi4_rd_latency(24'h0016B0, 50);
+    axi_arid_log.delete();
+    axi_araddr_log.delete();
+    axi_rid_log.delete();
+    driver_inst.send_read(24'h001680, 1);
+    driver_inst.send_read(24'h001690, 1);
+    driver_inst.send_read(24'h0016A0, 1);
+    driver_inst.send_read(24'h0016B0, 1);
+    collect_replies(4, replies);
+
+    if (replies[0].start_address !== 24'h001680 ||
+        replies[1].start_address !== 24'h001690 ||
+        replies[2].start_address !== 24'h0016A0 ||
+        replies[3].start_address !== 24'h0016B0) begin
+      $error("sc_hub_tb_top: T215 phase2 expected strict in-order replies after OOO disable");
+    end
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      expect_read_reply(replies[idx], 24'h001680 + idx * 16, 1);
+    end
+  endtask
+
+  task automatic run_t216();
+    sc_reply_t replies[0:15];
+    int first_ext_pos;
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      set_axi4_rd_latency(24'h001700 + idx * 16, 50);
+      driver_inst.send_read(24'h001700 + idx * 16, 1);
+    end
+    driver_inst.send_read(csr_addr(16'h000), 1);
+    driver_inst.send_read(csr_addr(16'h001), 1);
+    driver_inst.send_read(csr_addr(16'h002), 1);
+    driver_inst.send_read(csr_addr(16'h006), 1);
+    collect_replies(8, replies);
+
+    first_ext_pos = 8;
+    for (int unsigned idx = 0; idx < 8; idx++) begin
+      if (replies[idx].start_address >= 24'h001700 && replies[idx].start_address < 24'h001740) begin
+        if (idx < first_ext_pos) begin
+          first_ext_pos = idx;
+        end
+        expect_read_reply(replies[idx], replies[idx].start_address, 1);
+      end else begin
+        case (replies[idx].start_address)
+          24'h00FE80: expect_single_word_reply(replies[idx], 24'h00FE80, 32'h5348_0000);
+          24'h00FE81: expect_single_word_reply(replies[idx], 24'h00FE81, replies[idx].payload[0]);
+          24'h00FE82: expect_single_word_reply(replies[idx], 24'h00FE82, 32'h0000_0001);
+          24'h00FE86: expect_single_word_reply(replies[idx], 24'h00FE86, 32'h0000_0000);
+          default: $error("sc_hub_tb_top: T216 unexpected internal reply addr=0x%06h",
+                          replies[idx].start_address);
+        endcase
+      end
+    end
+
+    if (first_ext_pos < 4) begin
+      $error("sc_hub_tb_top: T216 expected all 4 internal CSR replies before any slow external reply (first_ext_pos=%0d)",
+             first_ext_pos);
+    end
+  endtask
+
+  task automatic run_t217();
+    sc_reply_t replies[0:15];
+    bit saw_id[0:3];
+    bit saw_rid_reorder;
+
+    axi_arid_log.delete();
+    axi_araddr_log.delete();
+    axi_rid_log.delete();
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    set_axi4_rd_latency(24'h001800, 2);
+    set_axi4_rd_latency(24'h001810, 50);
+    set_axi4_rd_latency(24'h001820, 2);
+    set_axi4_rd_latency(24'h001830, 50);
+
+    driver_inst.send_read(24'h001800, 1);
+    driver_inst.send_read(24'h001810, 1);
+    driver_inst.send_read(24'h001820, 1);
+    driver_inst.send_read(24'h001830, 1);
+    collect_replies(4, replies);
+
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      saw_id[idx] = 1'b0;
+      expect_read_reply(replies[idx], replies[idx].start_address, 1);
+    end
+    for (int unsigned idx = 0; idx < axi_arid_log.size(); idx++) begin
+      if (axi_arid_log[idx] < 4) begin
+        saw_id[axi_arid_log[idx]] = 1'b1;
+      end
+    end
+    for (int unsigned idx = 0; idx < 4; idx++) begin
+      if (!saw_id[idx]) begin
+        $error("sc_hub_tb_top: T217 expected ARID %0d to be used for concurrent reads", idx);
+      end
+    end
+
+    saw_rid_reorder = 1'b0;
+    if (axi_rid_log.size() >= 4 && axi_arid_log.size() >= 4) begin
+      for (int unsigned idx = 0; idx < 4; idx++) begin
+        if (axi_rid_log[idx] !== axi_arid_log[idx]) begin
+          saw_rid_reorder = 1'b1;
+        end
+      end
+    end
+    if (!saw_rid_reorder) begin
+      $error("sc_hub_tb_top: T217 expected RID completion order to differ from ARID issue order");
+    end
+  endtask
+
+  task automatic run_t219();
+    sc_reply_t replies[0:15];
+
+    reset_axi4_rd_latencies(1);
+    write_ooo_ctrl(1'b1);
+    set_axi4_rd_latency(24'h001900, 50);
+    set_axi4_rd_latency(24'h001910, 2);
+    driver_inst.send_read(24'h001900, 1);
+    driver_inst.send_read(24'h001910, 1);
+    collect_replies(2, replies);
+
+    if (replies[0].start_address !== 24'h001910) begin
+      $error("sc_hub_tb_top: T219 expected fast read reply to retire first");
+    end
+    expect_read_reply(replies[0], replies[0].start_address, 1);
+    expect_read_reply(replies[1], replies[1].start_address, 1);
   endtask
 `endif
 
@@ -2869,6 +3328,9 @@ module sc_hub_tb_top;
       axi_last_bresp             <= '0;
       axi_last_rresp             <= '0;
       axi_w_before_aw_violation  <= 1'b0;
+      axi_arid_log.delete();
+      axi_araddr_log.delete();
+      axi_rid_log.delete();
     end else begin
       if (axi_awvalid && axi_awready) begin
         axi_aw_count     <= axi_aw_count + 1;
@@ -2901,12 +3363,15 @@ module sc_hub_tb_top;
         axi_last_arsize  <= axi_arsize;
         axi_last_arburst <= axi_arburst;
         axi_last_arid    <= axi_arid;
+        axi_arid_log.push_back(axi_arid);
+        axi_araddr_log.push_back(axi_araddr);
       end
 
       if (axi_rvalid && axi_rready) begin
         axi_r_count    <= axi_r_count + 1;
         axi_last_rid   <= axi_rid;
         axi_last_rresp <= axi_rresp;
+        axi_rid_log.push_back(axi_rid);
         if (axi_rlast) begin
           axi_rlast_count <= axi_rlast_count + 1;
         end
@@ -2958,6 +3423,8 @@ module sc_hub_tb_top;
     .uplink_eop  (uplink_eop)
 `ifdef SC_HUB_BUS_AXI4
     ,
+    .axi_rd_done (dut_inst.bus_rd_done),
+    .axi_rd_done_tag (dut_inst.bus_rd_done_tag),
     .axi_awid    (axi_awid),
     .axi_awaddr  (axi_awaddr),
     .axi_awlen   (axi_awlen),
@@ -3094,6 +3561,9 @@ module sc_hub_tb_top;
     .rlast           (axi_rlast),
     .rvalid          (axi_rvalid),
     .rready          (axi_rready),
+    .inject_rd_error (inject_rd_error),
+    .inject_wr_error (inject_wr_error),
+    .inject_decode_error(inject_decode_error),
     .inject_rresp_err(inject_rresp_err),
     .inject_bresp_err(inject_bresp_err)
   );
@@ -3395,6 +3865,33 @@ module sc_hub_tb_top;
       end
       "T086": begin
         run_t086();
+      end
+      "T210": begin
+        run_t210();
+      end
+      "T211": begin
+        run_t211();
+      end
+      "T212": begin
+        run_t212();
+      end
+      "T213": begin
+        run_t213();
+      end
+      "T214": begin
+        run_t214();
+      end
+      "T215": begin
+        run_t215();
+      end
+      "T216": begin
+        run_t216();
+      end
+      "T217": begin
+        run_t217();
+      end
+      "T219": begin
+        run_t219();
       end
 `else
       "T077": begin

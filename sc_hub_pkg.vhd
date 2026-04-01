@@ -27,6 +27,7 @@ package sc_hub_pkg is
     constant HUB_VERSION_DAY_CONST          : natural := 31;
     constant MAX_BURST_WORDS_CONST          : natural := 256;
     constant DEFAULT_RD_TIMEOUT_CONST       : natural := 200;
+    constant DEFAULT_WR_TIMEOUT_CONST       : natural := 200;
     constant DEFAULT_DL_FIFO_DEPTH_CONST    : natural := 256;
     constant DEFAULT_BP_FIFO_DEPTH_CONST    : natural := 512;
     constant DEFAULT_PKT_TIMEOUT_CONST      : natural := 64;
@@ -55,6 +56,7 @@ package sc_hub_pkg is
     constant HUB_CSR_WO_LAST_WR_ADDR_CONST  : natural := 16#015#;
     constant HUB_CSR_WO_LAST_WR_DATA_CONST  : natural := 16#016#;
     constant HUB_CSR_WO_PKT_DROP_CNT_CONST  : natural := 16#017#;
+    constant HUB_CSR_WO_OOO_CTRL_CONST      : natural := 16#018#;
 
     constant HUB_ERR_UP_FIFO_OVERFLOW_CONST   : natural := 0;
     constant HUB_ERR_DOWN_FIFO_OVERFLOW_CONST : natural := 1;
