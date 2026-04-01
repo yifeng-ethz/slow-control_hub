@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TB_TOP="$SCRIPT_DIR/../sim/sc_hub_tb_top.sv"
-DEFAULT_MAX_TEST="${SC_HUB_MAX_BASIC:-122}"
+DEFAULT_MAX_TEST="${SC_HUB_MAX_BASIC:-0}"
 
 collect_tests() {
   awk -v bus="${BUS_TYPE:-AVALON}" '
@@ -42,8 +42,8 @@ collect_tests() {
   ' "$TB_TOP"
 }
 
-if [ "$DEFAULT_MAX_TEST" -lt 1 ]; then
-  echo "SC_HUB_MAX_BASIC must be > 0 (got: $DEFAULT_MAX_TEST)"
+if [ "$DEFAULT_MAX_TEST" -lt 0 ]; then
+  echo "SC_HUB_MAX_BASIC must be >= 0 (got: $DEFAULT_MAX_TEST)"
   exit 1
 fi
 
@@ -51,7 +51,7 @@ if [ "${1-}" != "" ]; then
   TESTS=("$@")
 else
   mapfile -t TESTS < <(collect_tests)
-  if [ "${#TESTS[@]}" -gt "$DEFAULT_MAX_TEST" ]; then
+  if [ "$DEFAULT_MAX_TEST" -gt 0 ] && [ "${#TESTS[@]}" -gt "$DEFAULT_MAX_TEST" ]; then
     TESTS=("${TESTS[@]:0:$DEFAULT_MAX_TEST}")
   fi
 fi
