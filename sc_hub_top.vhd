@@ -1,9 +1,11 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.9
--- Date    : 20260331
--- Change  : Split external packet-start admission from core dequeue admission.
+-- Version : 26.2.14
+-- Date    : 20260402
+-- Change  : Carry the RX internal/external packet classification into the
+--           core as a one-bit sideband so the accept path no longer
+--           re-decodes the packet address in the same cycle.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -17,7 +19,18 @@ entity sc_hub_top is
         BACKPRESSURE               : boolean := true;
         SCHEDULER_USE_PKT_TRANSFER : boolean := true;
         INVERT_RD_SIG              : boolean := true;
-        DEBUG                      : natural := 1
+        DEBUG                      : natural := 1;
+        OOO_ENABLE                 : boolean := false;
+        ORD_ENABLE                 : boolean := true;
+        ATOMIC_ENABLE              : boolean := true;
+        HUB_CAP_ENABLE             : boolean := true;
+        EXT_PLD_DEPTH              : positive := DEFAULT_DL_FIFO_DEPTH_CONST;
+        PKT_QUEUE_DEPTH            : positive := 16;
+        BP_FIFO_DEPTH              : positive := DEFAULT_BP_FIFO_DEPTH_CONST;
+        RD_TIMEOUT_CYCLES          : positive := DEFAULT_RD_TIMEOUT_CONST;
+        WR_TIMEOUT_CYCLES          : positive := DEFAULT_WR_TIMEOUT_CONST;
+        OUTSTANDING_LIMIT          : positive := 8;
+        OUTSTANDING_INT_RESERVED   : natural := 2
     );
     port(
         i_clk                       : in  std_logic;
@@ -50,21 +63,22 @@ architecture rtl of sc_hub_top is
     signal pkt_in_progress         : std_logic;
     signal pkt_valid               : std_logic;
     signal pkt_info                : sc_pkt_info_t;
+    signal pkt_is_internal         : std_logic;
     signal wr_data_rdreq           : std_logic;
     signal wr_data_q               : std_logic_vector(31 downto 0);
     signal wr_data_empty           : std_logic;
     signal pkt_drop_count          : std_logic_vector(15 downto 0);
     signal pkt_drop_pulse          : std_logic;
-    signal dl_fifo_usedw           : std_logic_vector(8 downto 0);
+    signal dl_fifo_usedw           : std_logic_vector(9 downto 0);
     signal dl_fifo_full            : std_logic;
     signal dl_fifo_overflow        : std_logic;
     signal dl_fifo_overflow_pulse  : std_logic;
-    signal bp_usedw                : std_logic_vector(ceil_log2_func(DEFAULT_BP_FIFO_DEPTH_CONST + 1) - 1 downto 0);
+    signal bp_usedw                : std_logic_vector(ceil_log2_func(BP_FIFO_DEPTH + 1) - 1 downto 0);
     signal bp_full                 : std_logic;
     signal bp_half_full            : std_logic;
     signal bp_overflow             : std_logic;
     signal bp_overflow_pulse       : std_logic;
-    signal bp_pkt_count            : std_logic_vector(ceil_log2_func(DEFAULT_BP_FIFO_DEPTH_CONST + 1) - 1 downto 0);
+    signal bp_pkt_count            : std_logic_vector(ceil_log2_func(BP_FIFO_DEPTH + 1) - 1 downto 0);
     signal tx_reply_start          : std_logic;
     signal tx_reply_info           : sc_pkt_info_t;
     signal tx_reply_response       : std_logic_vector(1 downto 0);
@@ -90,7 +104,10 @@ architecture rtl of sc_hub_top is
     signal bus_busy                : std_logic;
     signal bus_timeout_pulse       : std_logic;
     signal rx_ready                : std_logic;
+    signal core_soft_reset_pulse   : std_logic;
+    signal rx_soft_reset_pulse     : std_logic;
     signal soft_reset_pulse        : std_logic;
+    signal hub_reset_int           : std_logic;
 begin
     gen_invert_ready : if INVERT_RD_SIG generate
         uplink_ready_int <= not aso_upload_ready;
@@ -101,6 +118,10 @@ begin
     end generate;
 
     pkt_rx_inst : entity work.sc_hub_pkt_rx
+    generic map(
+        EXT_PLD_DEPTH_G   => EXT_PLD_DEPTH,
+        PKT_QUEUE_DEPTH_G => PKT_QUEUE_DEPTH
+    )
     port map(
         i_clk                 => i_clk,
         i_rst                 => i_rst,
@@ -113,6 +134,8 @@ begin
         o_pkt_in_progress     => pkt_in_progress,
         o_pkt_valid           => pkt_valid,
         o_pkt_info            => pkt_info,
+        o_pkt_is_internal     => pkt_is_internal,
+        o_soft_reset_pulse    => rx_soft_reset_pulse,
         i_wr_data_rdreq       => wr_data_rdreq,
         o_wr_data_q           => wr_data_q,
         o_wr_data_empty       => wr_data_empty,
@@ -125,9 +148,12 @@ begin
     );
 
     pkt_tx_inst : entity work.sc_hub_pkt_tx
+    generic map(
+        BP_FIFO_DEPTH_G => BP_FIFO_DEPTH
+    )
     port map(
         i_clk                       => i_clk,
-        i_rst                       => i_rst,
+        i_rst                       => hub_reset_int,
         i_soft_reset                => soft_reset_pulse,
         i_reply_start               => tx_reply_start,
         i_reply_info                => tx_reply_info,
@@ -154,15 +180,23 @@ begin
 
     core_inst : entity work.sc_hub_core
     generic map(
-        DEBUG_G => DEBUG
+        DEBUG_G                    => DEBUG,
+        OOO_ENABLE_G               => OOO_ENABLE,
+        ORD_ENABLE_G               => ORD_ENABLE,
+        ATOMIC_ENABLE_G            => ATOMIC_ENABLE,
+        HUB_CAP_ENABLE_G           => HUB_CAP_ENABLE,
+        BP_FIFO_DEPTH_G            => BP_FIFO_DEPTH,
+        OUTSTANDING_LIMIT_G        => OUTSTANDING_LIMIT,
+        OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED
     )
     port map(
         i_clk                    => i_clk,
-        i_rst                    => i_rst,
+        i_rst                    => hub_reset_int,
         i_pkt_valid              => pkt_valid,
         i_pkt_info               => pkt_info,
+        i_pkt_is_internal        => pkt_is_internal,
         o_rx_ready               => rx_ready,
-        o_soft_reset_pulse       => soft_reset_pulse,
+        o_soft_reset_pulse       => core_soft_reset_pulse,
         o_wr_data_rdreq          => wr_data_rdreq,
         i_wr_data_q              => wr_data_q,
         i_wr_data_empty          => wr_data_empty,
@@ -204,9 +238,13 @@ begin
     );
 
     avmm_handler_inst : entity work.sc_hub_avmm_handler
+    generic map(
+        RD_TIMEOUT_CYCLES_G => RD_TIMEOUT_CYCLES,
+        WR_TIMEOUT_CYCLES_G => WR_TIMEOUT_CYCLES
+    )
     port map(
         i_clk                   => i_clk,
-        i_rst                   => i_rst or soft_reset_pulse,
+        i_rst                   => hub_reset_int,
         i_cmd_valid             => bus_cmd_valid,
         o_cmd_ready             => bus_cmd_ready,
         i_cmd_is_read           => bus_cmd_is_read,
@@ -234,11 +272,16 @@ begin
         avm_hub_burstcount      => avm_hub_burstcount
     );
 
+    soft_reset_pulse <= core_soft_reset_pulse or rx_soft_reset_pulse;
+    hub_reset_int    <= i_rst or soft_reset_pulse;
+
     accept_new_pkt_int <= '1'
         when ((not BACKPRESSURE) or bp_half_full = '0')
         else '0';
 
-    o_download_ready <= download_ready_int
-        when ((not BACKPRESSURE) or bp_half_full = '0' or pkt_in_progress = '1')
-        else '0';
+    o_download_ready <= '0'
+        when (download_ready_int = '0')
+        else download_ready_int
+            when ((not BACKPRESSURE) or bp_half_full = '0' or pkt_in_progress = '1')
+            else '0';
 end architecture rtl;

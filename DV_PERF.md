@@ -190,7 +190,7 @@ Sweep buffer parameters at RTL to find the optimal configuration. Results set RT
 
 ---
 
-## 7. UVM Performance Sweep Extensions (T350-T360)
+## 7. UVM Performance Sweep Extensions (T350-T355)
 
 These are UVM test variants of the above directed scans for automated regression and cross-coverage closure.
 

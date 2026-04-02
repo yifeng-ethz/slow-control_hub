@@ -1,9 +1,10 @@
 -- File name: sc_hub_fifo_sf.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.0
--- Date    : 20260331
--- Change  : Add the download store-and-forward FIFO with commit/rollback support.
+-- Version : 26.2.1
+-- Date    : 20260401
+-- Change  : Merge commit and read accounting so same-cycle commit+drain does
+--           not drop one committed word from the visible usedw/full state.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -69,6 +70,12 @@ begin
     overflow  <= overflow_sticky;
 
     fifo_storage : process(csi_clk)
+        variable rd_ptr_v          : fifo_index_t;
+        variable commit_wr_ptr_v   : fifo_index_t;
+        variable shadow_wr_ptr_v   : fifo_index_t;
+        variable committed_words_v : natural range 0 to DEPTH_G;
+        variable shadow_words_v    : natural range 0 to DEPTH_G;
+        variable overflow_v        : std_logic;
     begin
         if rising_edge(csi_clk) then
             if (rsi_reset = '1' or clear = '1') then
@@ -79,36 +86,50 @@ begin
                 shadow_words    <= 0;
                 overflow_sticky <= '0';
             else
+                rd_ptr_v          := rd_ptr;
+                commit_wr_ptr_v   := commit_wr_ptr;
+                shadow_wr_ptr_v   := shadow_wr_ptr;
+                committed_words_v := committed_words;
+                shadow_words_v    := shadow_words;
+                overflow_v        := overflow_sticky;
+
                 if (capture_start = '1') then
-                    shadow_wr_ptr   <= commit_wr_ptr;
-                    shadow_words    <= 0;
-                    overflow_sticky <= '0';
+                    shadow_wr_ptr_v := commit_wr_ptr_v;
+                    shadow_words_v  := 0;
+                    overflow_v      := '0';
                 end if;
 
                 if (write_en = '1') then
-                    if ((committed_words + shadow_words) < DEPTH_G) then
-                        fifo_mem(shadow_wr_ptr) <= write_data;
-                        shadow_wr_ptr           <= next_index_func(shadow_wr_ptr);
-                        shadow_words            <= shadow_words + 1;
+                    if ((committed_words_v + shadow_words_v) < DEPTH_G) then
+                        fifo_mem(shadow_wr_ptr_v) <= write_data;
+                        shadow_wr_ptr_v           := next_index_func(shadow_wr_ptr_v);
+                        shadow_words_v            := shadow_words_v + 1;
                     else
-                        overflow_sticky <= '1';
+                        overflow_v := '1';
                     end if;
                 end if;
 
                 if (commit = '1') then
-                    commit_wr_ptr   <= shadow_wr_ptr;
-                    committed_words <= min_nat_func(DEPTH_G, committed_words + shadow_words);
-                    shadow_words    <= 0;
+                    commit_wr_ptr_v   := shadow_wr_ptr_v;
+                    committed_words_v := min_nat_func(DEPTH_G, committed_words_v + shadow_words_v);
+                    shadow_words_v    := 0;
                 elsif (rollback = '1') then
-                    shadow_wr_ptr   <= commit_wr_ptr;
-                    shadow_words    <= 0;
-                    overflow_sticky <= '0';
+                    shadow_wr_ptr_v := commit_wr_ptr_v;
+                    shadow_words_v  := 0;
+                    overflow_v      := '0';
                 end if;
 
                 if (read_en = '1' and committed_words > 0) then
-                    rd_ptr          <= next_index_func(rd_ptr);
-                    committed_words <= committed_words - 1;
+                    rd_ptr_v          := next_index_func(rd_ptr_v);
+                    committed_words_v := committed_words_v - 1;
                 end if;
+
+                rd_ptr          <= rd_ptr_v;
+                commit_wr_ptr   <= commit_wr_ptr_v;
+                shadow_wr_ptr   <= shadow_wr_ptr_v;
+                committed_words <= committed_words_v;
+                shadow_words    <= shadow_words_v;
+                overflow_sticky <= overflow_v;
             end if;
         end if;
     end process fifo_storage;

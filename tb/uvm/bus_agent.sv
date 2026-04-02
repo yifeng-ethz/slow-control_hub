@@ -103,11 +103,25 @@ class bus_slave_monitor_uvm extends uvm_monitor;
   endfunction
 
   function void write_cmd(sc_pkt_seq_item req_h);
+    sc_pkt_seq_item pending_cmd_h;
+    sc_pkt_seq_item atomic_wr_cmd_h;
+
     if (req_h == null) begin
       return;
     end
 
-    pending_cmd_q.push_back(req_h.clone_item("pending_cmd"));
+    if (req_h.malformed || sc_hub_ref_model_pkg::is_internal_csr_addr(req_h.start_address[15:0])) begin
+      return;
+    end
+
+    pending_cmd_h = req_h.clone_item("pending_cmd");
+    pending_cmd_q.push_back(pending_cmd_h);
+    if (req_h.has_atomic_meta()) begin
+      atomic_wr_cmd_h = req_h.clone_item("pending_atomic_wr_cmd");
+      atomic_wr_cmd_h.sc_type = SC_WRITE;
+      atomic_wr_cmd_h.rw_length = 1;
+      pending_cmd_q.push_back(atomic_wr_cmd_h);
+    end
     if (pending_cmd_q.size() > MAX_PENDING_CMDS) begin
       void'(pending_cmd_q.pop_front());
       pending_cmd_overflow_count++;
@@ -334,7 +348,11 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.force_ooo    = 1'b0;
       bus_h.is_ooo       = 1'b0;
       if (!has_match) begin
-        `uvm_warning(get_type_name(), "AVMM write txn had no matching pending command metadata")
+        `uvm_warning(get_type_name(),
+                     $sformatf("AVMM write txn had no matching pending command metadata addr=0x%04h burst=%0d pending_depth=%0d",
+                               bus_h.address,
+                               bus_h.burst_length,
+                               pending_cmd_q.size()))
       end
     end
 
@@ -342,6 +360,9 @@ class bus_slave_monitor_uvm extends uvm_monitor;
   endtask
 
   task run_phase(uvm_phase phase);
+    int unsigned avmm_wr_beats_remaining;
+
+    avmm_wr_beats_remaining = 0;
     if (cfg.bus_type == SC_HUB_BUS_AXI4) begin
       forever begin
         @(posedge axi4_vif.clk);
@@ -363,6 +384,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
         @(posedge avmm_vif.clk);
         if (avmm_vif.rst) begin
           pending_cmd_q.delete();
+          avmm_wr_beats_remaining = 0;
           continue;
         end
 
@@ -371,7 +393,13 @@ class bus_slave_monitor_uvm extends uvm_monitor;
         end
 
         if (avmm_vif.write && !avmm_vif.waitrequest) begin
-          sample_avmm_write();
+          if (avmm_wr_beats_remaining == 0) begin
+            sample_avmm_write();
+            avmm_wr_beats_remaining = (avmm_vif.burstcount == 0) ? 1 : avmm_vif.burstcount;
+          end
+          if (avmm_wr_beats_remaining != 0) begin
+            avmm_wr_beats_remaining--;
+          end
         end
       end
     end

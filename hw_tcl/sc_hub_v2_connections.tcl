@@ -165,24 +165,26 @@ proc sc_hub_v2_build_axi4_master {} {
 # Define fileset once at component load time
 # ----------------------------------------------------------------------------
 proc sc_hub_v2_init_fileset {} {
-    set component_dir $::sc_hub_v2_component_dir
-
     add_fileset QUARTUS_SYNTH QUARTUS_SYNTH "" ""
     set_fileset_property QUARTUS_SYNTH TOP_LEVEL sc_hub_top
     set_fileset_property QUARTUS_SYNTH ENABLE_RELATIVE_INCLUDE_PATHS false
+    set_fileset_property QUARTUS_SYNTH ENABLE_FILE_OVERWRITE_MODE false
 
-    # Package the live checked-in RTL, not the planned split-buffer file list.
-    add_fileset_file [file join $component_dir sc_hub_pkg.vhd]          VHDL PATH [file join $component_dir sc_hub_pkg.vhd]
-    add_fileset_file [file join $component_dir fifo sc_hub_fifo_sc.vhd] VHDL PATH [file join $component_dir fifo sc_hub_fifo_sc.vhd]
-    add_fileset_file [file join $component_dir fifo sc_hub_fifo_sf.vhd] VHDL PATH [file join $component_dir fifo sc_hub_fifo_sf.vhd]
-    add_fileset_file [file join $component_dir fifo sc_hub_fifo_bp.vhd] VHDL PATH [file join $component_dir fifo sc_hub_fifo_bp.vhd]
-    add_fileset_file [file join $component_dir sc_hub_pkt_rx.vhd]       VHDL PATH [file join $component_dir sc_hub_pkt_rx.vhd]
-    add_fileset_file [file join $component_dir sc_hub_pkt_tx.vhd]       VHDL PATH [file join $component_dir sc_hub_pkt_tx.vhd]
-    add_fileset_file [file join $component_dir sc_hub_core.vhd]         VHDL PATH [file join $component_dir sc_hub_core.vhd]
-    add_fileset_file [file join $component_dir sc_hub_avmm_handler.vhd] VHDL PATH [file join $component_dir sc_hub_avmm_handler.vhd]
-    add_fileset_file [file join $component_dir sc_hub_axi4_handler.vhd] VHDL PATH [file join $component_dir sc_hub_axi4_handler.vhd]
-    add_fileset_file [file join $component_dir sc_hub_top.vhd]          VHDL PATH [file join $component_dir sc_hub_top.vhd]
-    add_fileset_file [file join $component_dir sc_hub_top_axi4.vhd]     VHDL PATH [file join $component_dir sc_hub_top_axi4.vhd]
+    # Keep the PD wrapper aligned to the live checked-in AVMM top-level.
+    # Relative component paths avoid broken "submodules/home/..." QIP entries.
+    add_fileset_file sc_hub_pkg.vhd VHDL PATH sc_hub_pkg.vhd
+    add_fileset_file fifo/sc_hub_fifo_sc.vhd VHDL PATH fifo/sc_hub_fifo_sc.vhd
+    add_fileset_file fifo/sc_hub_fifo_sf.vhd VHDL PATH fifo/sc_hub_fifo_sf.vhd
+    add_fileset_file fifo/sc_hub_fifo_bp.vhd VHDL PATH fifo/sc_hub_fifo_bp.vhd
+    add_fileset_file sc_hub_pkt_rx.vhd VHDL PATH sc_hub_pkt_rx.vhd
+    add_fileset_file sc_hub_pkt_tx.vhd VHDL PATH sc_hub_pkt_tx.vhd
+    add_fileset_file sc_hub_core.vhd VHDL PATH sc_hub_core.vhd
+    add_fileset_file sc_hub_avmm_handler.vhd VHDL PATH sc_hub_avmm_handler.vhd
+    add_fileset_file sc_hub_axi4_handler.vhd VHDL PATH sc_hub_axi4_handler.vhd
+    add_fileset_file sc_hub_axi4_core.vhd VHDL PATH sc_hub_axi4_core.vhd
+    add_fileset_file sc_hub_axi4_ooo_handler.vhd VHDL PATH sc_hub_axi4_ooo_handler.vhd
+    add_fileset_file sc_hub_top.vhd VHDL PATH sc_hub_top.vhd TOP_LEVEL_FILE
+    add_fileset_file sc_hub_top_axi4.vhd VHDL PATH sc_hub_top_axi4.vhd
 }
 
 # ----------------------------------------------------------------------------

@@ -39,10 +39,17 @@ cd /home/yifeng/packages/mu3e_ip_dev/mu3e-ip-cores/slow-control_hub/tlm
 python3 scripts/run_ord_checks.py
 python3 scripts/run_ordering_scan.py
 
+# Run the concrete field-workload bundle and generate the review notebook.
+python3 scripts/run_field_workload.py --csv-dir results/field_review_v4/csv
+python3 scripts/generate_field_notebook.py --csv-dir results/field_review_v4/csv --out results/field_review_v4/field_workload_review.ipynb
+
+# The field bundle writes its own namespaced CSV set under results/field_review_v4/csv.
+# Use the executed notebook there for plots, or point custom scripts at that CSV directory.
+
 # Run one named experiment.
 python3 scripts/run_experiment.py RATE-08
 
-# Generate plots from existing CSV.
+# Generate plots from existing category CSV.
 python3 scripts/plot_results.py results/csv results/plots
 ```
 
@@ -63,6 +70,15 @@ python3 scripts/plot_results.py results/csv results/plots
 - `results/csv/latency_cdf.csv`
 - `results/csv/credit_trace.csv`
 - `results/csv/outstanding_trace.csv`
+- `results/field_review_v4/csv/field_summary.csv`
+- `results/field_review_v4/csv/field_transactions.csv`
+- `results/field_review_v4/csv/field_overlap_scan.csv`
+- `results/field_review_v4/csv/field_flow_summary.csv`
+- `results/field_review_v4/csv/field_config_summary.csv`
+- `results/field_review_v4/csv/field_scenarios.csv`
+- `results/field_review_v4/csv/field_credit_trace.csv`
+- `results/field_review_v4/csv/field_outstanding_trace.csv`
+- `results/field_review_v4/csv/field_ord_domain_trace.csv`
 
 Representative ORD entry points:
 

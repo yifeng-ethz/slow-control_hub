@@ -1,9 +1,10 @@
 -- File name: sc_hub_pkt_tx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.1
--- Date    : 20260331
--- Change  : Add a software-reset input that clears the backpressure FIFO and TX state.
+-- Version : 26.2.2
+-- Date    : 20260402
+-- Change  : Remove redundant same-cycle ready recheck on reply start so the
+--           core-side arming handshake defines TX launch timing.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -65,6 +66,7 @@ architecture rtl of sc_hub_pkt_tx is
     signal bp_overflow_sticky   : std_logic := '0';
     signal bp_overflow_pulse    : std_logic := '0';
     signal pkt_count            : natural range 0 to BP_FIFO_DEPTH_G := 0;
+    signal pkt_inc_pending      : std_logic := '0';
 
     function required_words_func (
         reply_has_data : std_logic;
@@ -127,6 +129,7 @@ begin
         variable packet_word_v : std_logic_vector(39 downto 0);
         variable start_pkt_v   : boolean;
         variable wrote_word_v  : boolean;
+        variable pkt_count_v   : natural range 0 to BP_FIFO_DEPTH_G;
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1' or i_soft_reset = '1') then
@@ -141,6 +144,7 @@ begin
                 bp_overflow_sticky <= '0';
                 bp_overflow_pulse  <= '0';
                 pkt_count          <= 0;
+                pkt_inc_pending    <= '0';
             else
                 bp_fifo_write_en   <= '0';
                 bp_fifo_write_data <= (others => '0');
@@ -149,12 +153,19 @@ begin
                 start_pkt_v        := false;
                 wrote_word_v       := false;
                 packet_word_v      := (others => '0');
+                pkt_count_v        := pkt_count;
 
-                if (bp_fifo_read_en = '1' and bp_fifo_read_data(37) = '1' and pkt_count > 0) then
-                    pkt_count <= pkt_count - 1;
+                if (bp_fifo_read_en = '1' and bp_fifo_read_data(37) = '1' and pkt_count_v > 0) then
+                    pkt_count_v := pkt_count_v - 1;
                 end if;
 
-                if (i_reply_start = '1' and o_reply_ready = '1') then
+                if (pkt_inc_pending = '1' and pkt_count_v < BP_FIFO_DEPTH_G) then
+                    pkt_count_v := pkt_count_v + 1;
+                end if;
+
+                pkt_inc_pending <= '0';
+
+                if (i_reply_start = '1') then
                     if (i_reply_suppress = '1') then
                         reply_done_pulse <= '1';
                         tx_state         <= IDLING;
@@ -165,6 +176,7 @@ begin
                         words_remaining    <= unsigned(i_reply_info.rw_length);
                         tx_state           <= EMITTING_PREAMBLE;
                         start_pkt_v        := true;
+                        pkt_inc_pending    <= '1';
                     end if;
                 end if;
 
@@ -180,14 +192,23 @@ begin
                         tx_state          <= EMITTING_ADDRESS;
 
                     when EMITTING_ADDRESS =>
+                        packet_word_v(31 downto 30) := reply_info_reg.order_mode;
+                        packet_word_v(29)           := '0';
+                        packet_word_v(28)           := reply_info_reg.atomic_flag;
+                        packet_word_v(27)           := reply_info_reg.mask_m;
+                        packet_word_v(26)           := reply_info_reg.mask_s;
+                        packet_word_v(25)           := reply_info_reg.mask_t;
+                        packet_word_v(24)           := reply_info_reg.mask_r;
                         packet_word_v(23 downto 0) := reply_info_reg.start_address;
                         wrote_word_v               := true;
                         tx_state                   <= EMITTING_HEADER;
 
                     when EMITTING_HEADER =>
+                        packet_word_v(31 downto 28) := reply_info_reg.order_domain;
+                        packet_word_v(27 downto 20) := reply_info_reg.order_epoch;
+                        packet_word_v(19 downto 18) := reply_info_reg.order_scope;
+                        packet_word_v(17 downto 16) := reply_response_reg;
                         packet_word_v(15 downto 0)  := reply_info_reg.rw_length;
-                        packet_word_v(16)           := '1';
-                        packet_word_v(29 downto 28) := reply_response_reg;
                         wrote_word_v                := true;
                         if (reply_has_data_reg = '1' and unsigned(reply_info_reg.rw_length) /= 0) then
                             tx_state <= EMITTING_DATA;
@@ -227,9 +248,7 @@ begin
                     end if;
                 end if;
 
-                if (start_pkt_v = true) then
-                    pkt_count <= pkt_count + 1;
-                end if;
+                pkt_count <= pkt_count_v;
             end if;
         end if;
     end process reply_formatter;

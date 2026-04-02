@@ -1,9 +1,9 @@
 -- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.9
+-- Version : 26.3.0
 -- Date    : 20260331
--- Change  : Split external packet-start admission from core dequeue admission.
+-- Change  : Add compile-time ordering/atomic capability controls for the AXI4 path.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -19,6 +19,9 @@ entity sc_hub_top_axi4 is
         INVERT_RD_SIG              : boolean := true;
         DEBUG                      : natural := 1;
         OOO_ENABLE                 : boolean := true;
+        ORD_ENABLE                 : boolean := true;
+        ATOMIC_ENABLE              : boolean := true;
+        HUB_CAP_ENABLE             : boolean := true;
         OOO_SLOT_COUNT             : positive := 4;
         OUTSTANDING_INT_RESERVED   : positive := 2;
         RD_TIMEOUT_CYCLES          : positive := DEFAULT_RD_TIMEOUT_CONST;
@@ -40,6 +43,7 @@ entity sc_hub_top_axi4 is
         m_axi_awlen                 : out std_logic_vector(7 downto 0);
         m_axi_awsize                : out std_logic_vector(2 downto 0);
         m_axi_awburst               : out std_logic_vector(1 downto 0);
+        m_axi_awlock                : out std_logic;
         m_axi_awvalid               : out std_logic;
         m_axi_awready               : in  std_logic;
         m_axi_wdata                 : out std_logic_vector(31 downto 0);
@@ -56,6 +60,7 @@ entity sc_hub_top_axi4 is
         m_axi_arlen                 : out std_logic_vector(7 downto 0);
         m_axi_arsize                : out std_logic_vector(2 downto 0);
         m_axi_arburst               : out std_logic_vector(1 downto 0);
+        m_axi_arlock                : out std_logic;
         m_axi_arvalid               : out std_logic;
         m_axi_arready               : in  std_logic;
         m_axi_rid                   : in  std_logic_vector(3 downto 0);
@@ -79,7 +84,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal wr_data_empty           : std_logic;
     signal pkt_drop_count          : std_logic_vector(15 downto 0);
     signal pkt_drop_pulse          : std_logic;
-    signal dl_fifo_usedw           : std_logic_vector(8 downto 0);
+    signal dl_fifo_usedw           : std_logic_vector(9 downto 0);
     signal dl_fifo_full            : std_logic;
     signal dl_fifo_overflow        : std_logic;
     signal dl_fifo_overflow_pulse  : std_logic;
@@ -104,6 +109,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_rd_cmd_address      : std_logic_vector(15 downto 0);
     signal bus_rd_cmd_length       : std_logic_vector(15 downto 0);
     signal bus_rd_cmd_tag          : std_logic_vector(3 downto 0);
+    signal bus_rd_cmd_lock         : std_logic;
     signal bus_rd_cmd_ready        : std_logic;
     signal bus_rd_data_tag         : std_logic_vector(3 downto 0);
     signal bus_rd_done             : std_logic;
@@ -115,6 +121,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_wr_cmd_valid        : std_logic;
     signal bus_wr_cmd_address      : std_logic_vector(15 downto 0);
     signal bus_wr_cmd_length       : std_logic_vector(15 downto 0);
+    signal bus_wr_cmd_lock         : std_logic;
     signal bus_wr_cmd_ready        : std_logic;
     signal bus_wr_done             : std_logic;
     signal bus_wr_response         : std_logic_vector(1 downto 0);
@@ -124,7 +131,10 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_rd_response         : std_logic_vector(1 downto 0);
     signal bus_busy                : std_logic;
     signal rx_ready                : std_logic;
+    signal core_soft_reset_pulse   : std_logic;
+    signal rx_soft_reset_pulse     : std_logic;
     signal soft_reset_pulse        : std_logic;
+    signal hub_reset_int           : std_logic;
 begin
     gen_invert_ready : if INVERT_RD_SIG generate
         uplink_ready_int <= not aso_upload_ready;
@@ -147,6 +157,7 @@ begin
         o_pkt_in_progress     => pkt_in_progress,
         o_pkt_valid           => pkt_valid,
         o_pkt_info            => pkt_info,
+        o_soft_reset_pulse    => rx_soft_reset_pulse,
         i_wr_data_rdreq       => wr_data_rdreq,
         o_wr_data_q           => wr_data_q,
         o_wr_data_empty       => wr_data_empty,
@@ -161,7 +172,7 @@ begin
     pkt_tx_inst : entity work.sc_hub_pkt_tx
     port map(
         i_clk                       => i_clk,
-        i_rst                       => i_rst,
+        i_rst                       => hub_reset_int,
         i_soft_reset                => soft_reset_pulse,
         i_reply_start               => tx_reply_start,
         i_reply_info                => tx_reply_info,
@@ -190,16 +201,19 @@ begin
     generic map(
         DEBUG_G                    => DEBUG,
         OOO_ENABLE_G               => OOO_ENABLE,
+        ORD_ENABLE_G               => ORD_ENABLE,
+        ATOMIC_ENABLE_G            => ATOMIC_ENABLE,
+        HUB_CAP_ENABLE_G           => HUB_CAP_ENABLE,
         OOO_SLOT_COUNT_G           => OOO_SLOT_COUNT,
         OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED
     )
     port map(
         i_clk                    => i_clk,
-        i_rst                    => i_rst,
+        i_rst                    => hub_reset_int,
         i_pkt_valid              => pkt_valid,
         i_pkt_info               => pkt_info,
         o_rx_ready               => rx_ready,
-        o_soft_reset_pulse       => soft_reset_pulse,
+        o_soft_reset_pulse       => core_soft_reset_pulse,
         o_wr_data_rdreq          => wr_data_rdreq,
         i_wr_data_q              => wr_data_q,
         i_wr_data_empty          => wr_data_empty,
@@ -229,6 +243,7 @@ begin
         o_bus_rd_cmd_address     => bus_rd_cmd_address,
         o_bus_rd_cmd_length      => bus_rd_cmd_length,
         o_bus_rd_cmd_tag         => bus_rd_cmd_tag,
+        o_bus_rd_cmd_lock        => bus_rd_cmd_lock,
         i_bus_rd_cmd_ready       => bus_rd_cmd_ready,
         i_bus_rd_data_valid      => bus_rd_data_valid,
         i_bus_rd_data            => bus_rd_data,
@@ -240,6 +255,7 @@ begin
         o_bus_wr_cmd_valid       => bus_wr_cmd_valid,
         o_bus_wr_cmd_address     => bus_wr_cmd_address,
         o_bus_wr_cmd_length      => bus_wr_cmd_length,
+        o_bus_wr_cmd_lock        => bus_wr_cmd_lock,
         i_bus_wr_cmd_ready       => bus_wr_cmd_ready,
         o_bus_wr_data_valid      => bus_wr_data_valid,
         o_bus_wr_data            => bus_wr_data,
@@ -252,19 +268,21 @@ begin
 
     axi4_handler_inst : entity work.sc_hub_axi4_ooo_handler
     generic map(
+        OOO_CFG_ENABLE_G    => OOO_ENABLE,
         RD_TIMEOUT_CYCLES_G    => RD_TIMEOUT_CYCLES,
         WR_TIMEOUT_CYCLES_G    => WR_TIMEOUT_CYCLES,
         MAX_READ_OUTSTANDING_G => OOO_SLOT_COUNT
     )
     port map(
         i_clk           => i_clk,
-        i_rst           => i_rst or soft_reset_pulse,
+        i_rst           => hub_reset_int,
         i_ooo_enable       => bus_ooo_enable,
         i_rd_cmd_valid     => bus_rd_cmd_valid,
         o_rd_cmd_ready     => bus_rd_cmd_ready,
         i_rd_cmd_address   => bus_rd_cmd_address,
         i_rd_cmd_length    => bus_rd_cmd_length,
         i_rd_cmd_tag       => bus_rd_cmd_tag,
+        i_rd_cmd_lock      => bus_rd_cmd_lock,
         o_rd_data_valid    => bus_rd_data_valid,
         o_rd_data          => bus_rd_data,
         o_rd_data_tag      => bus_rd_data_tag,
@@ -276,6 +294,7 @@ begin
         o_wr_cmd_ready     => bus_wr_cmd_ready,
         i_wr_cmd_address   => bus_wr_cmd_address,
         i_wr_cmd_length    => bus_wr_cmd_length,
+        i_wr_cmd_lock      => bus_wr_cmd_lock,
         i_wr_data_valid    => bus_wr_data_valid,
         i_wr_data          => bus_wr_data,
         o_wr_data_ready    => bus_wr_data_ready,
@@ -288,6 +307,7 @@ begin
         m_axi_awlen        => m_axi_awlen,
         m_axi_awsize       => m_axi_awsize,
         m_axi_awburst      => m_axi_awburst,
+        m_axi_awlock       => m_axi_awlock,
         m_axi_awvalid      => m_axi_awvalid,
         m_axi_awready      => m_axi_awready,
         m_axi_wdata        => m_axi_wdata,
@@ -304,6 +324,7 @@ begin
         m_axi_arlen        => m_axi_arlen,
         m_axi_arsize       => m_axi_arsize,
         m_axi_arburst      => m_axi_arburst,
+        m_axi_arlock       => m_axi_arlock,
         m_axi_arvalid      => m_axi_arvalid,
         m_axi_arready      => m_axi_arready,
         m_axi_rid          => m_axi_rid,
@@ -313,6 +334,9 @@ begin
         m_axi_rvalid       => m_axi_rvalid,
         m_axi_rready       => m_axi_rready
     );
+
+    soft_reset_pulse <= core_soft_reset_pulse or rx_soft_reset_pulse;
+    hub_reset_int    <= i_rst or soft_reset_pulse;
 
     accept_new_pkt_int <= '1'
         when ((not BACKPRESSURE) or bp_half_full = '0')

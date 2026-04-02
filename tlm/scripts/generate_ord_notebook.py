@@ -100,22 +100,22 @@ def build_notebook() -> dict[str, object]:
             """
         ),
         _md(
-            """
+            r"""
             ## Review Equations
-            \[
+            $$
             \eta=\frac{T_\text{ordered}}{T_\text{baseline}}
-            \]
-            normalized throughput \(\eta\) is one minus overhead in this notebook.
+            $$
+            normalized throughput $\eta$ is one minus overhead in this notebook.
 
-            \[
+            $$
             \hat F_X(x)=\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}\left(X_i\le x\right)
-            \]
+            $$
             This is the empirical CDF used in stall-distribution plots.
 
-            \[
+            $$
             E[D_\text{release}]=\mathbb E\left[\frac{\sum d_i^\text{release}}{N_\text{release}}\right],\quad
             T^{-1}=T_0^{-1}+\frac{E[D_\text{release}]+E[D_\text{acquire}] + \tau_0}{B}
-            \]
+            $$
             Release drain and acquire hold raise service time, then lower throughput; this is the primary release-drain reasoning.
             """
         ),

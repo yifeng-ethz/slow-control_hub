@@ -13,6 +13,17 @@ collect_tests() {
     BEGIN {
       depth = 0;
       active[0] = 1;
+      in_dispatch = 0;
+    }
+
+    /^[[:space:]]*case[[:space:]]*\(test_name\)/ {
+      in_dispatch = 1;
+      next;
+    }
+
+    in_dispatch && /^[[:space:]]*endcase/ {
+      in_dispatch = 0;
+      next;
     }
 
     /^`ifdef[[:space:]]+SC_HUB_BUS_AXI4/ {
@@ -36,7 +47,7 @@ collect_tests() {
       next;
     }
 
-    active[depth] && match($0, /"T[0-9][0-9][0-9]"/) {
+    in_dispatch && active[depth] && match($0, /"T[0-9][0-9][0-9]"/) {
       print substr($0, RSTART + 1, 4);
     }
   ' "$TB_TOP"

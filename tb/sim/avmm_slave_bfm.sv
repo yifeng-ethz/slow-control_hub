@@ -30,7 +30,43 @@ module avmm_slave_bfm #(
   logic [15:0] wr_addr_reg;
   int unsigned wr_beats_remaining;
   int unsigned rd_latency_cfg;
+  int unsigned rd_latency_override[0:MEM_DEPTH-1];
   int unsigned wr_latency_cfg;
+
+  task automatic clear_rd_latency_overrides();
+    for (int idx = 0; idx < MEM_DEPTH; idx++) begin
+      rd_latency_override[idx] = rd_latency_cfg;
+    end
+  endtask
+
+  task automatic set_rd_latency_for_addr(
+    input logic [15:0] addr,
+    input int unsigned latency
+  );
+    rd_latency_override[addr] = latency;
+  endtask
+
+  task automatic set_default_rd_latency(
+    input int unsigned latency
+  );
+    rd_latency_cfg = latency;
+    clear_rd_latency_overrides();
+  endtask
+
+  task automatic set_default_wr_latency(
+    input int unsigned latency
+  );
+    wr_latency_cfg = latency;
+  endtask
+
+  function automatic int unsigned rd_delay_for_addr(
+    input logic [15:0] addr
+  );
+    if (rd_latency_override[addr] == 0) begin
+      return 0;
+    end
+    return rd_latency_override[addr] - 1;
+  endfunction
 
   initial begin
     avm_readdata           = '0;
@@ -49,6 +85,7 @@ module avmm_slave_bfm #(
     wr_beats_remaining     = 0;
     rd_latency_cfg         = RD_LATENCY;
     wr_latency_cfg         = WR_LATENCY;
+    clear_rd_latency_overrides();
     foreach (mem[idx]) begin
       mem[idx] = 32'h1000_0000 + idx;
     end
@@ -69,6 +106,11 @@ module avmm_slave_bfm #(
       write_rsp_pending      <= 1'b0;
       wr_addr_reg            <= '0;
       wr_beats_remaining     <= 0;
+      rd_latency_cfg         <= RD_LATENCY;
+      wr_latency_cfg         <= WR_LATENCY;
+      for (int idx = 0; idx < MEM_DEPTH; idx++) begin
+        rd_latency_override[idx] <= RD_LATENCY;
+      end
     end else begin
       avm_waitrequest        <= 1'b0;
       avm_writeresponsevalid <= 1'b0;
@@ -78,9 +120,9 @@ module avmm_slave_bfm #(
         read_active        <= 1'b1;
         rd_addr_reg        <= avm_address;
         rd_beats_remaining <= (avm_burstcount == 0) ? 1 : avm_burstcount;
-        rd_delay           <= 0;
+        rd_delay           <= rd_delay_for_addr(avm_address);
       end else if (read_active) begin
-        if (rd_delay >= (rd_latency_cfg - 1)) begin
+        if (rd_delay == 0) begin
           avm_readdatavalid <= 1'b1;
           avm_readdata      <= mem[rd_addr_reg];
           if (inject_decode_error) begin
@@ -99,7 +141,7 @@ module avmm_slave_bfm #(
           end
           rd_delay <= 0;
         end else begin
-          rd_delay <= rd_delay + 1;
+          rd_delay <= rd_delay - 1;
         end
       end
 

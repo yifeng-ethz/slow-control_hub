@@ -4,23 +4,15 @@
 # ============================================================================
 set -euo pipefail
 
-cat <<'EOF'
-run_perf.sh
-============
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-No implemented PERF IDs are runnable in this snapshot.
+PERF_CASES=(
+  T300 T301 T302 T303 T304 T305 T306 T307 T308 T309
+  T310 T311 T312 T313 T314 T315 T316 T317 T318 T319
+  T320 T321 T322 T323 T324 T325 T326 T327 T328 T329
+  T330 T331 T332 T333 T334 T335 T336 T337 T338 T339
+  T340 T341 T342 T343 T344 T345 T346 T347 T348 T349
+  T350 T351 T352 T353 T354 T355
+)
 
-Planned PERF IDs from DV_PLAN: T300-T349 plus T350-T355.
-
-Blocked by missing RTL runtime instrumentation:
-- Throughput and rate-latency scans (T300+), OoO speedup counters (T313+),
-  fragmentation stress (T320+), credit/priority scan (T328+), and ordering overhead
-  sweeps (T336+).
-- Long-horizon characterization requires ordered statistics collection and stable
-  runtime counters in core/handler paths (not present in this TB mapping snapshot).
-
-See tb/implementation-status.md for exact RTL handoff list.
-EOF
-
-echo ""
-echo "No PERF runs were executed (blocked by RTL-handoff items below)."
+"$SCRIPT_DIR/run_uvm_case.sh" "${PERF_CASES[@]}"
