@@ -1,11 +1,10 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.14
+-- Version : 26.2.17
 -- Date    : 20260402
--- Change  : Carry the RX internal/external packet classification into the
---           core as a one-bit sideband so the accept path no longer
---           re-decodes the packet address in the same cycle.
+-- Change  : Remove the added RX/core staging register and restore the direct
+--           handoff because the extra stage regressed standalone timing.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 

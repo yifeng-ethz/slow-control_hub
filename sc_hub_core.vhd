@@ -1,11 +1,11 @@
 -- File name: sc_hub_core.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.24
+-- Version : 26.2.37
 -- Date    : 20260402
--- Change  : Keep queue dispatch and new RX acceptance on separate cycles so
---           live upload FIFO credit does not feed the pending-queue write
---           enable path in the standalone timing build.
+-- Change  : Keep external-write diagnostics in their own owner process and
+--           drive response_reg through explicit next-state muxing instead of a
+--           sparse clock-enable cone.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -126,6 +126,8 @@ architecture rtl of sc_hub_core is
     signal read_fill_index           : unsigned(15 downto 0) := (others => '0');
     signal reply_stream_index        : unsigned(15 downto 0) := (others => '0');
     signal reply_words_remaining     : unsigned(15 downto 0) := (others => '0');
+    signal reply_arm_pending         : std_logic := '0';
+    signal reply_arm_use_fifo_usedw  : std_logic := '0';
     signal write_stream_index        : unsigned(15 downto 0) := (others => '0');
     signal drain_remaining           : unsigned(15 downto 0) := (others => '0');
     signal atomic_read_data_reg      : std_logic_vector(31 downto 0) := (others => '0');
@@ -167,8 +169,13 @@ architecture rtl of sc_hub_core is
     signal wr_data_word_reg          : std_logic_vector(31 downto 0) := (others => '0');
     signal wr_data_reload_pending    : std_logic := '0';
     signal dispatch_pkt_reg          : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal dispatch_queue_idx_reg    : pending_queue_index_t := 0;
+    signal err_count_pulse_q         : std_logic := '0';
     signal tx_reply_ready_q          : std_logic := '0';
     signal soft_reset_pending        : std_logic := '0';
+    signal ext_write_diag_pending    : std_logic := '0';
+    signal ext_write_diag_addr_hold  : std_logic_vector(31 downto 0) := (others => '0');
+    signal ext_write_diag_data_hold  : std_logic_vector(31 downto 0) := (others => '0');
 
     function pkt_length_func (
         pkt_info : sc_pkt_info_t
@@ -361,6 +368,7 @@ begin
         variable int_sideband_write_v   : boolean;
         variable write_word_v           : std_logic_vector(31 downto 0);
         variable ext_write_word_v       : std_logic_vector(31 downto 0);
+        variable response_reg_v         : std_logic_vector(1 downto 0);
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1') then
@@ -383,14 +391,13 @@ begin
                 ext_pkt_read_count       <= (others => '0');
                 ext_pkt_write_count      <= (others => '0');
                 ext_word_read_count      <= (others => '0');
-                ext_word_write_count     <= (others => '0');
                 last_ext_read_addr       <= (others => '0');
                 last_ext_read_data       <= (others => '0');
-                last_ext_write_addr      <= (others => '0');
-                last_ext_write_data      <= (others => '0');
                 read_fill_index          <= (others => '0');
                 reply_stream_index       <= (others => '0');
                 reply_words_remaining    <= (others => '0');
+                reply_arm_pending        <= '0';
+                reply_arm_use_fifo_usedw <= '0';
                 write_stream_index       <= (others => '0');
                 drain_remaining          <= (others => '0');
                 atomic_read_data_reg     <= (others => '0');
@@ -423,6 +430,8 @@ begin
                 wr_data_word_reg         <= (others => '0');
                 wr_data_reload_pending   <= '0';
                 dispatch_pkt_reg         <= SC_PKT_INFO_RESET_CONST;
+                dispatch_queue_idx_reg   <= 0;
+                err_count_pulse_q        <= '0';
                 tx_reply_ready_q         <= '0';
                 soft_reset_pending       <= '0';
             else
@@ -457,6 +466,7 @@ begin
                 int_sideband_write_v := false;
                 write_word_v         := i_wr_data_q;
                 ext_write_word_v     := wr_data_word_reg;
+                response_reg_v       := response_reg;
                 if (barrier_guard_v /= 0) then
                     barrier_guard_v := barrier_guard_v - 1;
                 end if;
@@ -464,6 +474,11 @@ begin
                 if (soft_reset_pending = '1') then
                     soft_reset_request_v := true;
                     soft_reset_pending   <= '0';
+                end if;
+                if (err_count_pulse_q = '1') then
+                    if (hub_err_count(7 downto 0) /= to_unsigned(16#FF#, 8)) then
+                        hub_err_count <= resize(hub_err_count(7 downto 0) + 1, hub_err_count'length);
+                    end if;
                 end if;
                 if (wr_data_reload_pending = '1') then
                     wr_data_word_reg       <= i_wr_data_q;
@@ -504,7 +519,7 @@ begin
                 end if;
 
                 if (core_state = IDLING) then
-                    if (queue_count_v /= 0 and i_pkt_valid = '0') then
+                    if (queue_count_v /= 0) then
                         for pass_idx in 0 to 1 loop
                             exit when dispatch_queue_found_v = true;
                             for queue_idx in 0 to OUTSTANDING_LIMIT_G - 1 loop
@@ -558,23 +573,6 @@ begin
                                 end if;
                             end loop;
                         end loop;
-
-                        if (dispatch_queue_found_v = true) then
-                            if (pkt_is_internal_func(dispatch_pkt_v) = false and queue_ext_count_v /= 0) then
-                                queue_ext_count_v := queue_ext_count_v - 1;
-                            end if;
-                            if (queue_count_v > 1) then
-                                for shift_idx in 0 to OUTSTANDING_LIMIT_G - 2 loop
-                                    if (shift_idx >= dispatch_queue_idx_v and shift_idx + 1 < queue_count_v) then
-                                        queue_mem_v(shift_idx) := queue_mem_v(shift_idx + 1);
-                                    end if;
-                                end loop;
-                            end if;
-                            queue_count_v                  := queue_count_v - 1;
-                            if (queue_count_v = 0) then
-                                barrier_guard_v := 0;
-                            end if;
-                        end if;
                     end if;
                 end if;
 
@@ -603,7 +601,7 @@ begin
                             reply_suppress_reg    <= deferred_atomic_suppress;
                             reply_has_data_reg    <= deferred_atomic_has_data;
                             reply_is_internal_reg <= '0';
-                            response_reg          <= deferred_atomic_response;
+                            response_reg_v        := deferred_atomic_response;
                             read_fill_index       <= (others => '0');
                             reply_stream_index    <= (others => '0');
                             reply_words_remaining <= (others => '0');
@@ -616,14 +614,16 @@ begin
                                 rd_fifo_write_en   <= '1';
                                 rd_fifo_write_data <= deferred_atomic_data_word;
                                 read_fill_index    <= to_unsigned(1, read_fill_index'length);
-                                reply_words_remaining <= unsigned(deferred_atomic_pkt_info.rw_length);
-                                core_state         <= RD_REPLY_ARMING;
+                                reply_arm_pending        <= '1';
+                                reply_arm_use_fifo_usedw <= '0';
+                                core_state               <= RD_REPLY_ARMING;
                             else
                                 core_state <= WR_REPLY_ARMING;
                             end if;
                         elsif (dispatch_pkt_valid_v = true) then
-                            dispatch_pkt_reg <= dispatch_pkt_v;
-                            core_state       <= DISPATCH_CAPTURING;
+                            dispatch_pkt_reg       <= dispatch_pkt_v;
+                            dispatch_queue_idx_reg <= dispatch_queue_idx_v;
+                            core_state             <= DISPATCH_CAPTURING;
                         end if;
 
                     when DISPATCH_CAPTURING =>
@@ -634,7 +634,6 @@ begin
                             reply_suppress_reg <= '0';
                         end if;
                         reply_is_internal_reg <= '0';
-                        response_reg          <= SC_RSP_OK_CONST;
                         read_fill_index       <= (others => '0');
                         reply_stream_index    <= (others => '0');
                         reply_words_remaining <= (others => '0');
@@ -642,9 +641,26 @@ begin
                         wr_data_valid_reg     <= '0';
                         wr_data_word_reg      <= (others => '0');
                         wr_data_reload_pending <= '0';
+                        if (pkt_is_internal_func(dispatch_pkt_reg) = false and queue_ext_count_v /= 0) then
+                            queue_ext_count_v := queue_ext_count_v - 1;
+                        end if;
+                        if (queue_count_v > 1) then
+                            for shift_idx in 0 to OUTSTANDING_LIMIT_G - 2 loop
+                                if (shift_idx >= dispatch_queue_idx_reg and shift_idx + 1 < queue_count_v) then
+                                    queue_mem_v(shift_idx) := queue_mem_v(shift_idx + 1);
+                                end if;
+                            end loop;
+                        end if;
+                        if (queue_count_v /= 0) then
+                            if (queue_count_v = 1) then
+                                barrier_guard_v := 0;
+                            end if;
+                            queue_count_v := queue_count_v - 1;
+                        end if;
                         core_state            <= DISPATCH_DECODING;
 
                     when DISPATCH_DECODING =>
+                        response_reg_v        := SC_RSP_OK_CONST;
                         drain_remaining       <= unsigned(pkt_info_reg.rw_length);
                         bus_cmd_is_read_reg   <= '0';
                         bus_cmd_address_reg   <= pkt_info_reg.start_address(15 downto 0);
@@ -661,7 +677,7 @@ begin
                         end if;
 
                         if (unsupported_feature_v = true) then
-                            response_reg       <= SC_RSP_SLVERR_CONST;
+                            response_reg_v     := SC_RSP_SLVERR_CONST;
                             reply_has_data_reg <= '0';
                             if (reply_suppress_reg = '1') then
                                 core_state <= IDLING;
@@ -826,7 +842,7 @@ begin
                                 end if;
                             when others =>
                                 csr_word_v            := x"EEEEEEEE";
-                                response_reg          <= SC_RSP_SLVERR_CONST;
+                                response_reg_v        := SC_RSP_SLVERR_CONST;
                                 internal_addr_error_v := true;
                         end case;
 
@@ -841,9 +857,10 @@ begin
                             if (reply_suppress_reg = '1') then
                                 core_state <= IDLING;
                             else
-                                reply_stream_index <= (others => '0');
-                                reply_words_remaining <= pkt_len_v;
-                                core_state         <= RD_REPLY_ARMING;
+                                reply_stream_index       <= (others => '0');
+                                reply_arm_pending        <= '1';
+                                reply_arm_use_fifo_usedw <= '0';
+                                core_state               <= RD_REPLY_ARMING;
                             end if;
                         else
                             core_state <= INT_RD_OFFSETING;
@@ -868,7 +885,7 @@ begin
                         end if;
 
                         if (i_bus_done = '1') then
-                            response_reg <= i_bus_response;
+                            response_reg_v := i_bus_response;
                             if (i_bus_response = SC_RSP_SLVERR_CONST) then
                                 hub_err_flags(HUB_ERR_SLVERR_CONST) <= '1';
                                 err_pulse_v := true;
@@ -881,9 +898,10 @@ begin
                             elsif (reply_suppress_reg = '1') then
                                 core_state <= IDLING;
                             else
-                                reply_stream_index <= (others => '0');
-                                reply_words_remaining <= pkt_len_v;
-                                core_state         <= RD_REPLY_ARMING;
+                                reply_stream_index       <= (others => '0');
+                                reply_arm_pending        <= '1';
+                                reply_arm_use_fifo_usedw <= '0';
+                                core_state               <= RD_REPLY_ARMING;
                             end if;
                         end if;
 
@@ -904,7 +922,7 @@ begin
                         end if;
 
                         if (i_bus_done = '1') then
-                            response_reg <= i_bus_response;
+                            response_reg_v := i_bus_response;
                             bus_cmd_issued <= '0';
                             if (i_bus_response = SC_RSP_SLVERR_CONST) then
                                 hub_err_flags(HUB_ERR_SLVERR_CONST) <= '1';
@@ -944,13 +962,10 @@ begin
 
                     when ATOMIC_EXT_WR_RUNNING =>
                         if (i_bus_wr_data_ready = '1') then
-                            ext_word_write_count <= sat_inc32_func(ext_word_write_count);
-                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32));
-                            last_ext_write_data  <= atomic_write_data_reg;
                         end if;
 
                         if (i_bus_done = '1') then
-                            response_reg <= i_bus_response;
+                            response_reg_v := i_bus_response;
                             if (i_bus_response = SC_RSP_SLVERR_CONST) then
                                 hub_err_flags(HUB_ERR_SLVERR_CONST) <= '1';
                                 err_pulse_v := true;
@@ -980,14 +995,23 @@ begin
                             if (reply_suppress_reg = '1') then
                                 core_state <= IDLING;
                             else
-                                reply_stream_index <= (others => '0');
-                                reply_words_remaining <= pkt_len_v;
-                                core_state         <= RD_REPLY_ARMING;
+                                reply_stream_index       <= (others => '0');
+                                reply_arm_pending        <= '1';
+                                reply_arm_use_fifo_usedw <= '0';
+                                core_state               <= RD_REPLY_ARMING;
                             end if;
                         end if;
 
                     when RD_REPLY_ARMING =>
-                        if (tx_reply_ready_q = '1') then
+                        if (reply_arm_pending = '1') then
+                            if (reply_arm_use_fifo_usedw = '1') then
+                                reply_words_remaining <= resize(unsigned(rd_fifo_usedw), reply_words_remaining'length);
+                            else
+                                reply_words_remaining <= pkt_len_v;
+                            end if;
+                            reply_arm_pending        <= '0';
+                            reply_arm_use_fifo_usedw <= '0';
+                        elsif (tx_reply_ready_q = '1') then
                             tx_reply_start_pulse <= '1';
                             core_state           <= RD_REPLY_STREAMING;
                         end if;
@@ -1018,7 +1042,7 @@ begin
                         if (((int_sideband_write_v = true) or i_wr_data_empty = '0') and drain_remaining > 0) then
                             if (drain_remaining = pkt_len_v) then
                                 if (pkt_len_v /= 1) then
-                                    response_reg          <= SC_RSP_SLVERR_CONST;
+                                    response_reg_v        := SC_RSP_SLVERR_CONST;
                                     internal_addr_error_v := true;
                                 else
                                     csr_write_offset_v := to_integer(unsigned(pkt_info_reg.start_address(15 downto 0))) - HUB_CSR_BASE_ADDR_CONST;
@@ -1031,11 +1055,8 @@ begin
                                                 ext_pkt_read_count   <= (others => '0');
                                                 ext_pkt_write_count  <= (others => '0');
                                                 ext_word_read_count  <= (others => '0');
-                                                ext_word_write_count <= (others => '0');
                                                 last_ext_read_addr   <= (others => '0');
                                                 last_ext_read_data   <= (others => '0');
-                                                last_ext_write_addr  <= (others => '0');
-                                                last_ext_write_data  <= (others => '0');
                                             end if;
                                             if (write_word_v(2) = '1') then
                                                 soft_reset_pending <= '1';
@@ -1053,7 +1074,7 @@ begin
                                                 ooo_ctrl_enable <= '0';
                                             end if;
                                         when others =>
-                                            response_reg          <= SC_RSP_SLVERR_CONST;
+                                            response_reg_v        := SC_RSP_SLVERR_CONST;
                                             internal_addr_error_v := true;
                                     end case;
                                 end if;
@@ -1086,10 +1107,7 @@ begin
                         end if;
 
                         if (i_bus_wr_data_ready = '1' and wr_data_valid_reg = '1') then
-                            ext_word_write_count <= sat_inc32_func(ext_word_write_count);
-                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32) + resize(write_stream_index, 32));
-                            last_ext_write_data  <= ext_write_word_v;
-                            write_stream_index   <= write_stream_index + 1;
+                            write_stream_index       <= write_stream_index + 1;
                             if (write_stream_index + 1 >= pkt_len_v) then
                                 wr_data_valid_reg      <= '0';
                                 wr_data_reload_pending <= '0';
@@ -1100,7 +1118,7 @@ begin
                         end if;
 
                         if (i_bus_done = '1') then
-                            response_reg <= i_bus_response;
+                            response_reg_v := i_bus_response;
                             if (i_bus_response = SC_RSP_SLVERR_CONST) then
                                 hub_err_flags(HUB_ERR_SLVERR_CONST) <= '1';
                                 err_pulse_v := true;
@@ -1132,9 +1150,10 @@ begin
                             reply_suppress_reg = '0' and
                             rd_fifo_empty = '0'
                         ) then
-                            reply_stream_index <= (others => '0');
-                            reply_words_remaining <= resize(unsigned(rd_fifo_usedw), reply_words_remaining'length);
-                            core_state         <= RD_REPLY_ARMING;
+                            reply_stream_index       <= (others => '0');
+                            reply_arm_pending        <= '1';
+                            reply_arm_use_fifo_usedw <= '1';
+                            core_state               <= RD_REPLY_ARMING;
                         end if;
                 end case;
 
@@ -1144,16 +1163,17 @@ begin
                 end if;
 
                 if (err_pulse_v = true) then
-                    if (hub_err_count(7 downto 0) /= to_unsigned(16#FF#, 8)) then
-                        hub_err_count <= resize(hub_err_count(7 downto 0) + 1, hub_err_count'length);
-                    end if;
+                    err_count_pulse_q <= '1';
+                else
+                    err_count_pulse_q <= '0';
                 end if;
 
-                pending_pkt_mem    <= queue_mem_v;
-                pending_pkt_rd_ptr <= 0;
-                pending_pkt_wr_ptr <= 0;
-                pending_pkt_count  <= queue_count_v;
-                pending_ext_count  <= queue_ext_count_v;
+                response_reg         <= response_reg_v;
+                pending_pkt_mem      <= queue_mem_v;
+                pending_pkt_rd_ptr   <= 0;
+                pending_pkt_wr_ptr   <= 0;
+                pending_pkt_count    <= queue_count_v;
+                pending_ext_count    <= queue_ext_count_v;
                 barrier_guard_counter <= barrier_guard_v;
 
                 if (soft_reset_request_v = true) then
@@ -1162,7 +1182,7 @@ begin
                     reply_suppress_reg       <= '0';
                     reply_has_data_reg       <= '0';
                     reply_is_internal_reg    <= '0';
-                    response_reg             <= SC_RSP_OK_CONST;
+                    response_reg_v           := SC_RSP_OK_CONST;
                     hub_enable               <= '1';
                     hub_scratch              <= (others => '0');
                     hub_err_flags            <= (others => '0');
@@ -1176,14 +1196,13 @@ begin
                     ext_pkt_read_count       <= (others => '0');
                     ext_pkt_write_count      <= (others => '0');
                     ext_word_read_count      <= (others => '0');
-                    ext_word_write_count     <= (others => '0');
                     last_ext_read_addr       <= (others => '0');
                     last_ext_read_data       <= (others => '0');
-                    last_ext_write_addr      <= (others => '0');
-                    last_ext_write_data      <= (others => '0');
                     read_fill_index          <= (others => '0');
                     reply_stream_index       <= (others => '0');
                     reply_words_remaining    <= (others => '0');
+                    reply_arm_pending        <= '0';
+                    reply_arm_use_fifo_usedw <= '0';
                     write_stream_index       <= (others => '0');
                     drain_remaining          <= (others => '0');
                     atomic_read_data_reg     <= (others => '0');
@@ -1213,10 +1232,88 @@ begin
                     wr_data_valid_reg        <= '0';
                     wr_data_word_reg         <= (others => '0');
                     wr_data_reload_pending   <= '0';
+                    dispatch_pkt_reg         <= SC_PKT_INFO_RESET_CONST;
+                    dispatch_queue_idx_reg   <= 0;
+                    err_count_pulse_q        <= '0';
                     tx_reply_ready_q         <= '0';
                     soft_reset_pending       <= '0';
                 end if;
             end if;
         end if;
     end process core_fsm;
+
+    ext_write_diag_reg : process(i_clk)
+        variable pkt_len_v            : natural;
+        variable int_sideband_write_v : boolean;
+        variable write_beat_valid_v   : boolean;
+        variable write_word_v         : std_logic_vector(31 downto 0);
+        variable ctrl_clear_v         : boolean;
+    begin
+        if rising_edge(i_clk) then
+            if (i_rst = '1') then
+                ext_word_write_count   <= (others => '0');
+                last_ext_write_addr    <= (others => '0');
+                last_ext_write_data    <= (others => '0');
+                ext_write_diag_pending <= '0';
+                ext_write_diag_addr_hold <= (others => '0');
+                ext_write_diag_data_hold <= (others => '0');
+            else
+                pkt_len_v            := to_integer(pkt_length_func(pkt_info_reg));
+                int_sideband_write_v := (
+                    pkt_is_internal_func(pkt_info_reg) and
+                    pkt_is_read_func(pkt_info_reg) = false and
+                    pkt_info_reg.atomic_flag = '0' and
+                    pkt_len_v = 1
+                );
+                write_word_v       := i_wr_data_q;
+                write_beat_valid_v := (((int_sideband_write_v = true) or i_wr_data_empty = '0') and drain_remaining > 0);
+                ctrl_clear_v       := false;
+
+                if (int_sideband_write_v) then
+                    write_word_v := pkt_info_reg.atomic_data;
+                end if;
+
+                if (
+                    core_state = INT_WR_DRAINING and
+                    write_beat_valid_v and
+                    drain_remaining = pkt_length_func(pkt_info_reg) and
+                    int_sideband_write_v and
+                    to_integer(unsigned(pkt_info_reg.start_address(15 downto 0))) = HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WO_CTRL_CONST and
+                    (write_word_v(1) = '1' or write_word_v(2) = '1')
+                ) then
+                    ctrl_clear_v := true;
+                end if;
+
+                if (soft_reset_pending = '1' or ctrl_clear_v) then
+                    ext_word_write_count   <= (others => '0');
+                    last_ext_write_addr    <= (others => '0');
+                    last_ext_write_data    <= (others => '0');
+                    ext_write_diag_pending <= '0';
+                    ext_write_diag_addr_hold <= (others => '0');
+                    ext_write_diag_data_hold <= (others => '0');
+                else
+                    if (ext_write_diag_pending = '1') then
+                        ext_word_write_count   <= sat_inc32_func(ext_word_write_count);
+                        last_ext_write_addr    <= ext_write_diag_addr_hold;
+                        last_ext_write_data    <= ext_write_diag_data_hold;
+                        ext_write_diag_pending <= '0';
+                    end if;
+
+                    if (core_state = ATOMIC_EXT_WR_RUNNING and i_bus_wr_data_ready = '1') then
+                        ext_write_diag_pending   <= '1';
+                        ext_write_diag_addr_hold <= std_logic_vector(resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32));
+                        ext_write_diag_data_hold <= atomic_write_data_reg;
+                    elsif (core_state = EXT_WR_RUNNING and i_bus_wr_data_ready = '1' and wr_data_valid_reg = '1') then
+                        ext_write_diag_pending   <= '1';
+                        ext_write_diag_addr_hold <= std_logic_vector(resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32) + resize(write_stream_index, 32));
+                        if (wr_data_reload_pending = '1') then
+                            ext_write_diag_data_hold <= i_wr_data_q;
+                        else
+                            ext_write_diag_data_hold <= wr_data_word_reg;
+                        end if;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process ext_write_diag_reg;
 end architecture rtl;
