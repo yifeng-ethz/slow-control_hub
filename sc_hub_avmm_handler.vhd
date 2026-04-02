@@ -1,11 +1,11 @@
 -- File name: sc_hub_avmm_handler.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.1
--- Date    : 20260331
--- Change  : Bound the timeout counter to the configured read/write timeout
---           range so the timeout-enable cone does not inherit an unnecessary
---           wide integer datapath.
+-- Version : 26.2.2
+-- Date    : 20260402
+-- Change  : Keep the bounded timeout counter and capture zero-latency read
+--           data in the launch cycle so same-cycle readdatavalid does not
+--           fall through the timeout path.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -137,7 +137,35 @@ begin
                     when LAUNCHING_READ =>
                         if (avm_hub_waitrequest = '0') then
                             timeout_counter <= 0;
-                            avmm_state      <= READING_DATA;
+                            if (avm_hub_readdatavalid = '1') then
+                                rd_data_valid_pulse <= '1';
+
+                                if (avm_hub_response = SC_RSP_SLVERR_CONST) then
+                                    rd_data_reg  <= x"BBADBEEF";
+                                    response_reg <= avm_hub_response;
+                                elsif (avm_hub_response = SC_RSP_DECERR_CONST) then
+                                    rd_data_reg  <= x"DEADBEEF";
+                                    response_reg <= avm_hub_response;
+                                else
+                                    rd_data_reg <= avm_hub_readdata;
+                                end if;
+
+                                if (avm_hub_response /= SC_RSP_OK_CONST) then
+                                    response_reg <= avm_hub_response;
+                                end if;
+
+                                if (cmd_length_reg <= to_unsigned(1, cmd_length_reg'length)) then
+                                    rd_data_last_pulse <= '1';
+                                    done_pulse         <= '1';
+                                    avmm_state         <= IDLING;
+                                else
+                                    avmm_state <= READING_DATA;
+                                end if;
+
+                                words_seen <= to_unsigned(1, words_seen'length);
+                            else
+                                avmm_state <= READING_DATA;
+                            end if;
                         end if;
 
                     when READING_DATA =>
