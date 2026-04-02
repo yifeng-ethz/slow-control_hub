@@ -1,13 +1,11 @@
 -- File name: sc_hub_axi4_core.vhd
 -- Author: OpenAI Codex
 -- =======================================
--- Version : 26.3.0
--- Date    : 20260331
--- Change  : Add an AXI4-oriented core with configurable OoO read slots,
---           dedicated internal CSR reply slots, runtime OOO_CTRL control,
---           deterministic in-order fallback when OoO is disabled, compile-time
---           ordering/atomic capability safe-fail handling, and sidebanded
---           internal single-word write payload handling.
+-- Version : 26.3.12
+-- Date    : 20260402
+-- Change  : Give internal CSR fill a dedicated current-offset owner register
+--           and make external diagnostic packet and word counters wrap instead
+--           of running a full-width saturating compare on every increment.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -89,7 +87,7 @@ end entity sc_hub_axi4_core;
 
 architecture rtl of sc_hub_axi4_core is
     type ext_slot_state_t is (SLOT_FREE, SLOT_WAIT_ISSUE, SLOT_WAIT_DATA, SLOT_READY);
-    type tx_state_t is (TX_IDLE, TX_STREAMING, TX_WAIT_DONE);
+    type tx_state_t is (TX_IDLE, TX_SELECTING, TX_PRIMING, TX_STREAMING, TX_WAIT_DONE);
     type tx_source_t is (TX_SRC_NONE, TX_SRC_EXT_READ, TX_SRC_INT_READ, TX_SRC_WRITE);
     type write_state_t is (
         WR_IDLE,
@@ -102,12 +100,14 @@ architecture rtl of sc_hub_axi4_core is
         WR_ATOMIC_WR_RUNNING
     );
     type ext_slot_state_array_t is array (natural range <>) of ext_slot_state_t;
-    type slot_word_array_t is array (0 to MAX_BURST_WORDS_CONST - 1) of std_logic_vector(31 downto 0);
-    type slot_payload_mem_t is array (natural range <>) of slot_word_array_t;
+    type slot_data_array_t is array (natural range <>) of std_logic_vector(31 downto 0);
+    type slot_addr_array_t is array (natural range <>) of natural range 0 to MAX_BURST_WORDS_CONST - 1;
     type slot_pkt_info_array_t is array (natural range <>) of sc_pkt_info_t;
     type slot_rsp_array_t is array (natural range <>) of std_logic_vector(1 downto 0);
     type slot_unsigned16_array_t is array (natural range <>) of unsigned(15 downto 0);
     type slot_unsigned8_array_t is array (natural range <>) of unsigned(7 downto 0);
+
+    constant PAYLOAD_ADDR_WIDTH_CONST : positive := ceil_log2_func(MAX_BURST_WORDS_CONST);
 
     signal ext_slot_state          : ext_slot_state_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => SLOT_FREE);
     signal ext_slot_pkt_info       : slot_pkt_info_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => SC_PKT_INFO_RESET_CONST);
@@ -116,7 +116,10 @@ architecture rtl of sc_hub_axi4_core is
     signal ext_slot_words_received : slot_unsigned16_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => '0'));
     signal ext_slot_issue_seq      : slot_unsigned8_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => '0'));
     signal ext_slot_complete_seq   : slot_unsigned8_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => '0'));
-    signal ext_slot_payload_mem    : slot_payload_mem_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => (others => '0')));
+    signal ext_slot_payload_q      : slot_data_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => '0'));
+    signal ext_slot_payload_wr_en  : std_logic_vector(0 to OOO_SLOT_COUNT_G - 1) := (others => '0');
+    signal ext_slot_payload_wr_addr: slot_addr_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => 0);
+    signal ext_slot_payload_wr_data: slot_data_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => (others => '0'));
 
     signal int_slot_valid          : std_logic_vector(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => '0');
     signal int_slot_pkt_info       : slot_pkt_info_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => SC_PKT_INFO_RESET_CONST);
@@ -124,20 +127,50 @@ architecture rtl of sc_hub_axi4_core is
     signal int_slot_response       : slot_rsp_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => SC_RSP_OK_CONST);
     signal int_slot_issue_seq      : slot_unsigned8_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => (others => '0'));
     signal int_slot_complete_seq   : slot_unsigned8_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => (others => '0'));
-    signal int_slot_payload_mem    : slot_payload_mem_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => (others => (others => '0')));
+    signal int_slot_payload_q      : slot_data_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => (others => '0'));
+    signal int_slot_payload_wr_en  : std_logic_vector(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => '0');
+    signal int_slot_payload_wr_addr: slot_addr_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => 0);
+    signal int_slot_payload_wr_data: slot_data_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1) := (others => (others => '0'));
+    signal int_fill_active         : std_logic := '0';
+    signal int_fill_slot           : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1 := 0;
+    signal int_fill_pkt_info       : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal int_fill_csr_offset     : natural range 0 to HUB_CSR_WINDOW_WORDS_CONST + MAX_BURST_WORDS_CONST - 1 := 0;
+    signal int_fill_index          : natural range 0 to MAX_BURST_WORDS_CONST - 1 := 0;
+    signal int_fill_wr_pending     : std_logic := '0';
+    signal int_fill_wr_slot        : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1 := 0;
+    signal int_fill_wr_addr        : natural range 0 to MAX_BURST_WORDS_CONST - 1 := 0;
+    signal int_fill_wr_data        : std_logic_vector(31 downto 0) := (others => '0');
+    signal int_fill_wr_last        : std_logic := '0';
 
     signal rd_issue_valid          : std_logic := '0';
     signal rd_issue_slot           : natural range 0 to OOO_SLOT_COUNT_G - 1 := 0;
+    signal rd_issue_live           : std_logic := '0';
+    signal rd_cmd_pending_valid    : std_logic := '0';
+    signal rd_cmd_pending_slot     : natural range 0 to OOO_SLOT_COUNT_G - 1 := 0;
+    signal rd_cmd_pending_live     : std_logic := '0';
 
     signal tx_state                : tx_state_t := TX_IDLE;
     signal tx_source               : tx_source_t := TX_SRC_NONE;
     signal tx_slot_index           : natural := 0;
     signal tx_word_index           : unsigned(15 downto 0) := (others => '0');
+    signal tx_payload_rd_addr      : natural range 0 to MAX_BURST_WORDS_CONST - 1 := 0;
     signal tx_reply_info_reg       : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
     signal tx_reply_response_reg   : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal tx_reply_has_data_reg   : std_logic := '0';
     signal tx_reply_suppress_reg   : std_logic := '0';
     signal tx_reply_start_pulse    : std_logic := '0';
+    signal tx_ooo_int_ready_valid  : std_logic := '0';
+    signal tx_ooo_int_ready_slot   : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1 := 0;
+    signal tx_ooo_int_ready_seq    : unsigned(7 downto 0) := (others => '0');
+    signal tx_ooo_ext_ready_valid  : std_logic := '0';
+    signal tx_ooo_ext_ready_slot   : natural range 0 to OOO_SLOT_COUNT_G - 1 := 0;
+    signal tx_ooo_ext_ready_seq    : unsigned(7 downto 0) := (others => '0');
+    signal tx_issue_int_ready_valid: std_logic := '0';
+    signal tx_issue_int_ready_slot : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1 := 0;
+    signal tx_issue_int_ready_seq  : unsigned(7 downto 0) := (others => '0');
+    signal tx_issue_ext_ready_valid: std_logic := '0';
+    signal tx_issue_ext_ready_slot : natural range 0 to OOO_SLOT_COUNT_G - 1 := 0;
+    signal tx_issue_ext_ready_seq  : unsigned(7 downto 0) := (others => '0');
 
     signal write_state             : write_state_t := WR_IDLE;
     signal write_pkt_info          : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
@@ -170,6 +203,8 @@ architecture rtl of sc_hub_axi4_core is
     signal last_ext_read_data        : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_write_addr       : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_write_data       : std_logic_vector(31 downto 0) := (others => '0');
+    signal diag_clear_pending        : std_logic := '0';
+    signal err_count_inc_pending     : std_logic := '0';
     signal soft_reset_pulse          : std_logic := '0';
 
     signal issue_seq_counter         : unsigned(7 downto 0) := (others => '0');
@@ -202,6 +237,13 @@ architecture rtl of sc_hub_axi4_core is
             return false;
         end if;
     end function effective_ooo_func;
+
+    function wrap_inc32_func (
+        value_in : unsigned(31 downto 0)
+    ) return unsigned is
+    begin
+        return value_in + 1;
+    end function wrap_inc32_func;
 
     function any_ext_busy_func (
         state_in : ext_slot_state_array_t
@@ -249,19 +291,32 @@ begin
         )
         else '0';
     o_bus_ooo_enable    <= '1' when effective_ooo_func(ooo_ctrl_enable) else '0';
-    o_bus_rd_cmd_valid  <= '1' when (write_state = WR_ATOMIC_RD_WAIT_CMD) else rd_issue_valid;
+    rd_issue_live <= '1'
+        when (
+            rd_issue_valid = '1' and
+            ext_slot_state(rd_issue_slot) = SLOT_WAIT_ISSUE
+        )
+        else '0';
+    rd_cmd_pending_live <= '1'
+        when (
+            rd_cmd_pending_valid = '1' and
+            ext_slot_state(rd_cmd_pending_slot) = SLOT_WAIT_ISSUE
+        )
+        else '0';
+
+    o_bus_rd_cmd_valid  <= '1' when (write_state = WR_ATOMIC_RD_WAIT_CMD) else rd_cmd_pending_live;
     o_bus_rd_cmd_address <= write_pkt_info.start_address(15 downto 0)
         when (write_state = WR_ATOMIC_RD_WAIT_CMD)
-        else ext_slot_pkt_info(rd_issue_slot).start_address(15 downto 0);
+        else ext_slot_pkt_info(rd_cmd_pending_slot).start_address(15 downto 0);
     o_bus_rd_cmd_length  <= std_logic_vector(to_unsigned(1, o_bus_rd_cmd_length'length))
         when (write_state = WR_ATOMIC_RD_WAIT_CMD)
-        else ext_slot_pkt_info(rd_issue_slot).rw_length;
+        else ext_slot_pkt_info(rd_cmd_pending_slot).rw_length;
     o_bus_rd_cmd_tag     <= (others => '0')
         when (write_state = WR_ATOMIC_RD_WAIT_CMD or OOO_ENABLE_G = false)
-        else std_logic_vector(to_unsigned(rd_issue_slot, 4));
+        else std_logic_vector(to_unsigned(rd_cmd_pending_slot, 4));
     o_bus_rd_cmd_lock    <= write_pkt_info.atomic_flag
         when (write_state = WR_ATOMIC_RD_WAIT_CMD)
-        else ext_slot_pkt_info(rd_issue_slot).atomic_flag;
+        else ext_slot_pkt_info(rd_cmd_pending_slot).atomic_flag;
     o_bus_wr_cmd_valid   <= '1'
         when (write_state = WR_EXT_WAIT_CMD or write_state = WR_ATOMIC_WR_WAIT_CMD)
         else '0';
@@ -292,8 +347,60 @@ begin
         )
         else '0';
     o_rx_ready           <= rx_ready_int;
+    tx_payload_rd_addr   <= to_integer(tx_word_index(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0))
+        when (
+            tx_state = TX_PRIMING and
+            to_integer(tx_word_index) < MAX_BURST_WORDS_CONST
+        )
+        else to_integer(resize(tx_word_index + 1, PAYLOAD_ADDR_WIDTH_CONST))
+        when (
+            tx_state = TX_STREAMING and
+            i_tx_data_ready = '1' and
+            to_integer(tx_word_index) + 1 < MAX_BURST_WORDS_CONST and
+            tx_word_index + 1 < unsigned(tx_reply_info_reg.rw_length)
+        )
+        else to_integer(tx_word_index(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0))
+        when (
+            tx_state = TX_STREAMING and
+            to_integer(tx_word_index) < MAX_BURST_WORDS_CONST
+        )
+        else 0;
 
-    tx_data_mux : process(tx_source, tx_slot_index, tx_word_index, tx_reply_info_reg, ext_slot_payload_mem, int_slot_payload_mem)
+    ext_payload_ram_gen : for idx in 0 to OOO_SLOT_COUNT_G - 1 generate
+    begin
+        ext_payload_ram_inst : entity work.sc_hub_payload_ram
+        generic map(
+            DATA_WIDTH_G => 32,
+            ADDR_WIDTH_G => PAYLOAD_ADDR_WIDTH_CONST
+        )
+        port map(
+            i_clk     => i_clk,
+            i_rd_addr => tx_payload_rd_addr,
+            i_wr_addr => ext_slot_payload_wr_addr(idx),
+            i_wr_data => ext_slot_payload_wr_data(idx),
+            i_wr_en   => ext_slot_payload_wr_en(idx),
+            o_rd_data => ext_slot_payload_q(idx)
+        );
+    end generate ext_payload_ram_gen;
+
+    int_payload_ram_gen : for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 generate
+    begin
+        int_payload_ram_inst : entity work.sc_hub_payload_ram
+        generic map(
+            DATA_WIDTH_G => 32,
+            ADDR_WIDTH_G => PAYLOAD_ADDR_WIDTH_CONST
+        )
+        port map(
+            i_clk     => i_clk,
+            i_rd_addr => tx_payload_rd_addr,
+            i_wr_addr => int_slot_payload_wr_addr(idx),
+            i_wr_data => int_slot_payload_wr_data(idx),
+            i_wr_en   => int_slot_payload_wr_en(idx),
+            o_rd_data => int_slot_payload_q(idx)
+        );
+    end generate int_payload_ram_gen;
+
+    tx_data_mux : process(tx_source, tx_slot_index, tx_word_index, tx_reply_info_reg, ext_slot_payload_q, int_slot_payload_q, ext_slot_words_received, write_reply_data_word)
         variable tx_word_index_v : natural;
         variable tx_length_v     : natural;
     begin
@@ -302,42 +409,18 @@ begin
         tx_length_v     := to_integer(unsigned(tx_reply_info_reg.rw_length));
         if (tx_word_index_v < tx_length_v and tx_word_index_v < MAX_BURST_WORDS_CONST) then
             if (tx_source = TX_SRC_EXT_READ) then
-                o_tx_data_word <= ext_slot_payload_mem(tx_slot_index)(tx_word_index_v);
+                if (tx_word_index_v < to_integer(ext_slot_words_received(tx_slot_index))) then
+                    o_tx_data_word <= ext_slot_payload_q(tx_slot_index);
+                else
+                    o_tx_data_word <= x"EEEEEEEE";
+                end if;
             elsif (tx_source = TX_SRC_INT_READ) then
-                o_tx_data_word <= int_slot_payload_mem(tx_slot_index)(tx_word_index_v);
+                o_tx_data_word <= int_slot_payload_q(tx_slot_index);
             elsif (tx_source = TX_SRC_WRITE) then
                 o_tx_data_word <= write_reply_data_word;
             end if;
         end if;
     end process tx_data_mux;
-
-    read_issue_select : process(ext_slot_state, ext_slot_issue_seq)
-        variable found_v     : boolean;
-        variable best_slot_v : natural range 0 to OOO_SLOT_COUNT_G - 1;
-        variable best_seq_v  : unsigned(7 downto 0);
-    begin
-        found_v     := false;
-        best_slot_v := 0;
-        best_seq_v  := (others => '1');
-
-        for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
-            if (ext_slot_state(idx) = SLOT_WAIT_ISSUE) then
-                if (found_v = false or ext_slot_issue_seq(idx) < best_seq_v) then
-                    found_v     := true;
-                    best_slot_v := idx;
-                    best_seq_v  := ext_slot_issue_seq(idx);
-                end if;
-            end if;
-        end loop;
-
-        if (found_v) then
-            rd_issue_valid <= '1';
-            rd_issue_slot  <= best_slot_v;
-        else
-            rd_issue_valid <= '0';
-            rd_issue_slot  <= 0;
-        end if;
-    end process read_issue_select;
 
     rx_ready_select : process(
         i_pkt_valid,
@@ -346,6 +429,7 @@ begin
         ooo_ctrl_enable,
         ext_slot_state,
         int_slot_valid,
+        int_fill_active,
         write_state,
         write_reply_pending,
         tx_state
@@ -363,7 +447,7 @@ begin
         allow_ooo_v      := effective_ooo_func(ooo_ctrl_enable);
         ext_busy_v       := any_ext_busy_func(ext_slot_state);
         int_busy_v       := any_int_busy_func(int_slot_valid);
-        busy_for_order_v := ext_busy_v or int_busy_v or write_state /= WR_IDLE or
+        busy_for_order_v := ext_busy_v or int_busy_v or int_fill_active = '1' or write_state /= WR_IDLE or
                             write_reply_pending = '1' or tx_state /= TX_IDLE;
         internal_pkt_v   := internal_hit_func(i_pkt_info);
         read_pkt_v       := pkt_is_read_func(i_pkt_info);
@@ -385,7 +469,7 @@ begin
 
             if (read_pkt_v) then
                 if (internal_pkt_v) then
-                    if (have_free_int_v and (allow_ooo_v or busy_for_order_v = false)) then
+                    if (have_free_int_v and int_fill_active = '0' and (allow_ooo_v or busy_for_order_v = false)) then
                         rx_ready_int <= '1';
                     end if;
                 else
@@ -451,6 +535,20 @@ begin
         variable write_word_v           : std_logic_vector(31 downto 0);
         variable hub_cap_word_v         : std_logic_vector(31 downto 0);
         variable accepted_pkt_info_v    : sc_pkt_info_t;
+        variable int_slot_valid_v       : std_logic_vector(0 to OUTSTANDING_INT_RESERVED_G - 1);
+        variable int_slot_issue_seq_v   : slot_unsigned8_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1);
+        variable int_slot_complete_seq_v : slot_unsigned8_array_t(0 to OUTSTANDING_INT_RESERVED_G - 1);
+        variable ext_slot_state_v       : ext_slot_state_array_t(0 to OOO_SLOT_COUNT_G - 1);
+        variable ext_slot_issue_seq_v   : slot_unsigned8_array_t(0 to OOO_SLOT_COUNT_G - 1);
+        variable ext_slot_complete_seq_v : slot_unsigned8_array_t(0 to OOO_SLOT_COUNT_G - 1);
+        variable tx_ooo_int_ready_live_v   : boolean;
+        variable tx_ooo_ext_ready_live_v   : boolean;
+        variable tx_issue_int_ready_live_v : boolean;
+        variable tx_issue_ext_ready_live_v : boolean;
+        variable rd_cmd_pending_valid_v    : std_logic;
+        variable rd_cmd_pending_slot_v     : natural range 0 to OOO_SLOT_COUNT_G - 1;
+        variable diag_clear_pending_v      : std_logic;
+        variable err_count_inc_pending_v   : std_logic;
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1') then
@@ -461,14 +559,30 @@ begin
                 ext_slot_words_received   <= (others => (others => '0'));
                 ext_slot_issue_seq        <= (others => (others => '0'));
                 ext_slot_complete_seq     <= (others => (others => '0'));
-                ext_slot_payload_mem      <= (others => (others => (others => '0')));
+                ext_slot_payload_wr_en    <= (others => '0');
+                ext_slot_payload_wr_addr  <= (others => 0);
+                ext_slot_payload_wr_data  <= (others => (others => '0'));
                 int_slot_valid            <= (others => '0');
                 int_slot_pkt_info         <= (others => SC_PKT_INFO_RESET_CONST);
                 int_slot_reply_suppress   <= (others => '0');
                 int_slot_response         <= (others => SC_RSP_OK_CONST);
                 int_slot_issue_seq        <= (others => (others => '0'));
                 int_slot_complete_seq     <= (others => (others => '0'));
-                int_slot_payload_mem      <= (others => (others => (others => '0')));
+                int_slot_payload_wr_en    <= (others => '0');
+                int_slot_payload_wr_addr  <= (others => 0);
+                int_slot_payload_wr_data  <= (others => (others => '0'));
+                int_fill_active           <= '0';
+                int_fill_slot             <= 0;
+                int_fill_pkt_info         <= SC_PKT_INFO_RESET_CONST;
+                int_fill_csr_offset       <= 0;
+                int_fill_index            <= 0;
+                int_fill_wr_pending       <= '0';
+                int_fill_wr_slot          <= 0;
+                int_fill_wr_addr          <= 0;
+                int_fill_wr_data          <= (others => '0');
+                int_fill_wr_last          <= '0';
+                rd_cmd_pending_valid      <= '0';
+                rd_cmd_pending_slot       <= 0;
                 tx_state                  <= TX_IDLE;
                 tx_source                 <= TX_SRC_NONE;
                 tx_slot_index             <= 0;
@@ -508,6 +622,8 @@ begin
                 last_ext_read_data        <= (others => '0');
                 last_ext_write_addr       <= (others => '0');
                 last_ext_write_data       <= (others => '0');
+                diag_clear_pending        <= '0';
+                err_count_inc_pending     <= '0';
                 soft_reset_pulse          <= '0';
                 issue_seq_counter         <= (others => '0');
                 complete_seq_counter      <= (others => '0');
@@ -520,10 +636,22 @@ begin
                 unsupported_feature_v  := false;
                 unsupported_order_v    := false;
                 unsupported_atomic_v   := false;
+                int_slot_valid_v       := int_slot_valid;
+                int_slot_issue_seq_v   := int_slot_issue_seq;
+                int_slot_complete_seq_v := int_slot_complete_seq;
+                ext_slot_state_v       := ext_slot_state;
+                ext_slot_issue_seq_v   := ext_slot_issue_seq;
+                ext_slot_complete_seq_v := ext_slot_complete_seq;
+                rd_cmd_pending_valid_v := rd_cmd_pending_valid;
+                rd_cmd_pending_slot_v  := rd_cmd_pending_slot;
+                diag_clear_pending_v   := diag_clear_pending;
+                err_count_inc_pending_v := err_count_inc_pending;
+                ext_slot_payload_wr_en <= (others => '0');
+                int_slot_payload_wr_en <= (others => '0');
                 allow_ooo_v            := effective_ooo_func(ooo_ctrl_enable);
                 ext_busy_v             := any_ext_busy_func(ext_slot_state);
                 int_busy_v             := any_int_busy_func(int_slot_valid);
-                busy_for_order_v       := ext_busy_v or int_busy_v or write_state /= WR_IDLE or
+                busy_for_order_v       := ext_busy_v or int_busy_v or int_fill_active = '1' or write_state /= WR_IDLE or
                                           write_reply_pending = '1' or tx_state /= TX_IDLE;
                 hub_cap_word_v         := (others => '0');
                 if (OOO_ENABLE_G) then
@@ -537,6 +665,26 @@ begin
                 end if;
                 hub_cap_word_v(3) := '1';
                 hub_gts_counter        <= hub_gts_counter + 1;
+
+                if (diag_clear_pending = '1') then
+                    hub_err_flags        <= (others => '0');
+                    hub_err_count        <= (others => '0');
+                    ext_pkt_read_count   <= (others => '0');
+                    ext_pkt_write_count  <= (others => '0');
+                    ext_word_read_count  <= (others => '0');
+                    ext_word_write_count <= (others => '0');
+                    last_ext_read_addr   <= (others => '0');
+                    last_ext_read_data   <= (others => '0');
+                    last_ext_write_addr  <= (others => '0');
+                    last_ext_write_data  <= (others => '0');
+                    diag_clear_pending_v := '0';
+                    err_count_inc_pending_v := '0';
+                elsif (err_count_inc_pending = '1') then
+                    if (hub_err_count(7 downto 0) /= to_unsigned(16#FF#, 8)) then
+                        hub_err_count <= resize(hub_err_count(7 downto 0) + 1, hub_err_count'length);
+                    end if;
+                    err_count_inc_pending_v := '0';
+                end if;
 
                 if (i_bp_overflow_pulse = '1') then
                     hub_err_flags(HUB_ERR_UP_FIFO_OVERFLOW_CONST) <= '1';
@@ -558,19 +706,27 @@ begin
                     err_pulse_v := true;
                 end if;
 
-                if (rd_issue_valid = '1' and i_bus_rd_cmd_ready = '1') then
-                    ext_slot_state(rd_issue_slot) <= SLOT_WAIT_DATA;
+                if (
+                    write_state /= WR_ATOMIC_RD_WAIT_CMD and
+                    rd_cmd_pending_live = '1' and
+                    i_bus_rd_cmd_ready = '1'
+                ) then
+                    ext_slot_state(rd_cmd_pending_slot) <= SLOT_WAIT_DATA;
+                    ext_slot_state_v(rd_cmd_pending_slot) := SLOT_WAIT_DATA;
+                    rd_cmd_pending_valid_v := '0';
                 end if;
 
                 if (i_bus_rd_data_valid = '1') then
                     bus_tag_v := to_integer(unsigned(i_bus_rd_data_tag));
                     if (bus_tag_v < OOO_SLOT_COUNT_G and ext_slot_state(bus_tag_v) = SLOT_WAIT_DATA) then
-                        ext_slot_payload_mem(bus_tag_v)(to_integer(ext_slot_words_received(bus_tag_v))) <= i_bus_rd_data;
+                        ext_slot_payload_wr_en(bus_tag_v)   <= '1';
+                        ext_slot_payload_wr_addr(bus_tag_v) <= to_integer(ext_slot_words_received(bus_tag_v)(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0));
+                        ext_slot_payload_wr_data(bus_tag_v) <= i_bus_rd_data;
                         next_read_addr_v := resize(unsigned(ext_slot_pkt_info(bus_tag_v).start_address(15 downto 0)), 32) +
                                             resize(ext_slot_words_received(bus_tag_v), 32);
                         last_ext_read_addr   <= std_logic_vector(next_read_addr_v);
                         last_ext_read_data   <= i_bus_rd_data;
-                        ext_word_read_count  <= sat_inc32_func(ext_word_read_count);
+                        ext_word_read_count  <= wrap_inc32_func(ext_word_read_count);
                         ext_slot_words_received(bus_tag_v) <= ext_slot_words_received(bus_tag_v) + 1;
                     end if;
                 end if;
@@ -583,13 +739,6 @@ begin
                             done_words_v := ext_slot_words_received(bus_tag_v) + 1;
                         end if;
 
-                        for word_idx in 0 to MAX_BURST_WORDS_CONST - 1 loop
-                            if (word_idx >= to_integer(done_words_v) and
-                                word_idx < to_integer(unsigned(ext_slot_pkt_info(bus_tag_v).rw_length))) then
-                                ext_slot_payload_mem(bus_tag_v)(word_idx) <= x"EEEEEEEE";
-                            end if;
-                        end loop;
-
                         ext_slot_words_received(bus_tag_v) <= done_words_v;
                         ext_slot_response(bus_tag_v)       <= i_bus_rd_response;
                         if (i_bus_rd_response = SC_RSP_SLVERR_CONST) then
@@ -601,9 +750,12 @@ begin
                         end if;
                         if (ext_slot_reply_suppress(bus_tag_v) = '1') then
                             ext_slot_state(bus_tag_v) <= SLOT_FREE;
+                            ext_slot_state_v(bus_tag_v) := SLOT_FREE;
                         else
                             ext_slot_state(bus_tag_v)      <= SLOT_READY;
                             ext_slot_complete_seq(bus_tag_v) <= complete_seq_counter;
+                            ext_slot_state_v(bus_tag_v)      := SLOT_READY;
+                            ext_slot_complete_seq_v(bus_tag_v) := complete_seq_counter;
                             complete_seq_counter           <= complete_seq_counter + 1;
                         end if;
                     end if;
@@ -637,16 +789,7 @@ begin
                                         when HUB_CSR_WO_CTRL_CONST =>
                                             hub_enable <= write_word_v(0);
                                             if (write_word_v(1) = '1' or write_word_v(2) = '1') then
-                                                hub_err_flags        <= (others => '0');
-                                                hub_err_count        <= (others => '0');
-                                                ext_pkt_read_count   <= (others => '0');
-                                                ext_pkt_write_count  <= (others => '0');
-                                                ext_word_read_count  <= (others => '0');
-                                                ext_word_write_count <= (others => '0');
-                                                last_ext_read_addr   <= (others => '0');
-                                                last_ext_read_data   <= (others => '0');
-                                                last_ext_write_addr  <= (others => '0');
-                                                last_ext_write_data  <= (others => '0');
+                                                diag_clear_pending_v := '1';
                                             end if;
                                             if (write_word_v(2) = '1') then
                                                 soft_reset_request_v := true;
@@ -699,7 +842,7 @@ begin
                             last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32) +
                                                                      resize(write_stream_index, 32));
                             last_ext_write_data  <= i_wr_data_q;
-                            ext_word_write_count <= sat_inc32_func(ext_word_write_count);
+                            ext_word_write_count <= wrap_inc32_func(ext_word_write_count);
                             write_stream_index   <= write_stream_index + 1;
                         end if;
 
@@ -732,7 +875,7 @@ begin
                             atomic_read_data_reg <= i_bus_rd_data;
                             last_ext_read_addr   <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32));
                             last_ext_read_data   <= i_bus_rd_data;
-                            ext_word_read_count  <= sat_inc32_func(ext_word_read_count);
+                            ext_word_read_count  <= wrap_inc32_func(ext_word_read_count);
                         end if;
 
                         if (i_bus_rd_done = '1') then
@@ -773,7 +916,7 @@ begin
                             last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32) +
                                                                      resize(write_stream_index, 32));
                             last_ext_write_data  <= atomic_write_data_reg;
-                            ext_word_write_count <= sat_inc32_func(ext_word_write_count);
+                            ext_word_write_count <= wrap_inc32_func(ext_word_write_count);
                             write_stream_index   <= write_stream_index + 1;
                         end if;
 
@@ -797,135 +940,258 @@ begin
                         end if;
                 end case;
 
-                if (tx_state = TX_IDLE and i_tx_reply_ready = '1') then
+                if (int_fill_wr_pending = '1') then
+                    int_slot_payload_wr_en(int_fill_wr_slot)   <= '1';
+                    int_slot_payload_wr_addr(int_fill_wr_slot) <= int_fill_wr_addr;
+                    int_slot_payload_wr_data(int_fill_wr_slot) <= int_fill_wr_data;
+                    int_fill_wr_pending                        <= '0';
+                    if (int_fill_wr_last = '1') then
+                        int_fill_active <= '0';
+                        if (int_slot_reply_suppress(int_fill_wr_slot) = '0') then
+                            int_slot_valid(int_fill_wr_slot)          <= '1';
+                            int_slot_complete_seq(int_fill_wr_slot)   <= complete_seq_counter;
+                            int_slot_valid_v(int_fill_wr_slot)        := '1';
+                            int_slot_complete_seq_v(int_fill_wr_slot) := complete_seq_counter;
+                            complete_seq_counter                      <= complete_seq_counter + 1;
+                        end if;
+                    else
+                        int_fill_csr_offset <= int_fill_csr_offset + 1;
+                        int_fill_index <= int_fill_index + 1;
+                    end if;
+                elsif (int_fill_active = '1') then
+                    status_word_v      := (others => '0');
+                    fifo_status_word_v := (others => '0');
+                    if (busy_for_order_v) then
+                        status_word_v(0) := '1';
+                    else
+                        status_word_v(0) := '0';
+                    end if;
+                    if (hub_err_flags /= std_logic_vector(to_unsigned(0, hub_err_flags'length))) then
+                        status_word_v(1) := '1';
+                    else
+                        status_word_v(1) := '0';
+                    end if;
+                    status_word_v(2) := i_dl_fifo_full;
+                    status_word_v(3) := i_bp_full;
+                    status_word_v(4) := hub_enable;
+                    status_word_v(5) := i_bus_busy;
+
+                    fifo_status_word_v(0) := i_dl_fifo_full;
+                    fifo_status_word_v(1) := i_bp_full;
+                    fifo_status_word_v(2) := i_dl_fifo_overflow;
+                    fifo_status_word_v(3) := i_bp_overflow;
+                    fifo_status_word_v(5) := '1';
+
+                    offset_v   := int_fill_csr_offset;
+                    csr_word_v := (others => '0');
+                    case offset_v is
+                        when HUB_CSR_WO_ID_CONST =>
+                            csr_word_v := HUB_ID_CONST;
+                        when HUB_CSR_WO_VERSION_CONST =>
+                            csr_word_v := pack_version_func(
+                                HUB_VERSION_YY_CONST,
+                                HUB_VERSION_MAJOR_CONST,
+                                HUB_VERSION_PRE_CONST,
+                                HUB_VERSION_MONTH_CONST,
+                                HUB_VERSION_DAY_CONST
+                            );
+                        when HUB_CSR_WO_CTRL_CONST =>
+                            csr_word_v(0) := hub_enable;
+                        when HUB_CSR_WO_STATUS_CONST =>
+                            csr_word_v := status_word_v;
+                        when HUB_CSR_WO_ERR_FLAGS_CONST =>
+                            csr_word_v := hub_err_flags;
+                        when HUB_CSR_WO_ERR_COUNT_CONST =>
+                            csr_word_v := std_logic_vector(hub_err_count);
+                        when HUB_CSR_WO_SCRATCH_CONST =>
+                            csr_word_v := hub_scratch;
+                        when HUB_CSR_WO_GTS_SNAP_LO_CONST =>
+                            csr_word_v := std_logic_vector(hub_gts_snapshot(31 downto 0));
+                        when HUB_CSR_WO_GTS_SNAP_HI_CONST =>
+                            csr_word_v(15 downto 0) := std_logic_vector(hub_gts_snapshot(47 downto 32));
+                            hub_gts_snapshot        <= hub_gts_counter;
+                        when HUB_CSR_WO_FIFO_CFG_CONST =>
+                            csr_word_v(0) := '1';
+                            csr_word_v(1) := hub_upload_store_forward;
+                        when HUB_CSR_WO_FIFO_STATUS_CONST =>
+                            csr_word_v := fifo_status_word_v;
+                        when HUB_CSR_WO_DOWN_PKT_CNT_CONST =>
+                            if (busy_for_order_v) then
+                                csr_word_v(0) := '1';
+                            end if;
+                        when HUB_CSR_WO_UP_PKT_CNT_CONST =>
+                            csr_word_v(9 downto 0) := i_bp_pkt_count;
+                        when HUB_CSR_WO_DOWN_USEDW_CONST =>
+                            csr_word_v(9 downto 0) := i_dl_fifo_usedw;
+                        when HUB_CSR_WO_UP_USEDW_CONST =>
+                            csr_word_v(9 downto 0) := i_bp_usedw;
+                        when HUB_CSR_WO_EXT_PKT_RD_CONST =>
+                            csr_word_v := std_logic_vector(ext_pkt_read_count);
+                        when HUB_CSR_WO_EXT_PKT_WR_CONST =>
+                            csr_word_v := std_logic_vector(ext_pkt_write_count);
+                        when HUB_CSR_WO_EXT_WORD_RD_CONST =>
+                            csr_word_v := std_logic_vector(ext_word_read_count);
+                        when HUB_CSR_WO_EXT_WORD_WR_CONST =>
+                            csr_word_v := std_logic_vector(ext_word_write_count);
+                        when HUB_CSR_WO_LAST_RD_ADDR_CONST =>
+                            csr_word_v := last_ext_read_addr;
+                        when HUB_CSR_WO_LAST_RD_DATA_CONST =>
+                            csr_word_v := last_ext_read_data;
+                        when HUB_CSR_WO_LAST_WR_ADDR_CONST =>
+                            csr_word_v := last_ext_write_addr;
+                        when HUB_CSR_WO_LAST_WR_DATA_CONST =>
+                            csr_word_v := last_ext_write_data;
+                        when HUB_CSR_WO_PKT_DROP_CNT_CONST =>
+                            csr_word_v(15 downto 0) := i_pkt_drop_count;
+                        when HUB_CSR_WO_OOO_CTRL_CONST =>
+                            if (OOO_ENABLE_G = true) then
+                                csr_word_v(0) := ooo_ctrl_enable;
+                            else
+                                csr_word_v(0) := '0';
+                            end if;
+                        when HUB_CSR_WO_HUB_CAP_CONST =>
+                            if (HUB_CAP_ENABLE_G = true) then
+                                csr_word_v := hub_cap_word_v;
+                            end if;
+                        when others =>
+                            csr_word_v := x"EEEEEEEE";
+                            int_slot_response(int_fill_slot) <= SC_RSP_SLVERR_CONST;
+                            internal_addr_error_v := true;
+                    end case;
+
+                    int_fill_wr_pending <= '1';
+                    int_fill_wr_slot    <= int_fill_slot;
+                    int_fill_wr_addr    <= int_fill_index;
+                    int_fill_wr_data    <= csr_word_v;
+                    if (int_fill_index + 1 >= to_integer(unsigned(int_fill_pkt_info.rw_length))) then
+                        int_fill_wr_last <= '1';
+                    else
+                        int_fill_wr_last <= '0';
+                    end if;
+                end if;
+
+                if (tx_state = TX_IDLE) then
                     selected_valid_v      := false;
                     selected_from_write_v := false;
                     selected_internal_v   := false;
                     selected_slot_v       := 0;
+                    tx_ooo_int_ready_live_v   := (tx_ooo_int_ready_valid = '1' and int_slot_valid(tx_ooo_int_ready_slot) = '1');
+                    tx_ooo_ext_ready_live_v   := (tx_ooo_ext_ready_valid = '1' and ext_slot_state(tx_ooo_ext_ready_slot) = SLOT_READY);
+                    tx_issue_int_ready_live_v := (tx_issue_int_ready_valid = '1' and int_slot_valid(tx_issue_int_ready_slot) = '1');
+                    tx_issue_ext_ready_live_v := (tx_issue_ext_ready_valid = '1' and ext_slot_state(tx_issue_ext_ready_slot) = SLOT_READY);
 
                     ready_internal_write_v := (write_reply_pending = '1' and write_is_internal = '1');
                     ready_external_write_v := (write_reply_pending = '1' and write_is_internal = '0');
 
                     if (allow_ooo_v) then
-                        best_complete_seq_v := (others => '1');
-
-                        if (ready_internal_write_v) then
-                            selected_valid_v      := true;
-                            selected_from_write_v := true;
-                            selected_internal_v   := true;
-                            selected_slot_v       := 0;
-                            best_complete_seq_v   := write_complete_seq;
-                        end if;
-
-                        for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
-                            if (int_slot_valid(idx) = '1') then
-                                if (selected_valid_v = false or int_slot_complete_seq(idx) < best_complete_seq_v) then
-                                    selected_valid_v      := true;
-                                    selected_from_write_v := false;
-                                    selected_internal_v   := true;
-                                    selected_slot_v       := idx;
-                                    best_complete_seq_v   := int_slot_complete_seq(idx);
-                                end if;
-                            end if;
-                        end loop;
-
-                        if (selected_valid_v = false) then
-                            if (ready_external_write_v) then
-                                selected_valid_v      := true;
+                        if (ready_internal_write_v or tx_ooo_int_ready_live_v) then
+                            selected_valid_v    := true;
+                            selected_internal_v := true;
+                            if (
+                                ready_internal_write_v and
+                                (
+                                    tx_ooo_int_ready_live_v = false or
+                                    write_complete_seq <= tx_ooo_int_ready_seq
+                                )
+                            ) then
                                 selected_from_write_v := true;
-                                selected_internal_v   := false;
                                 selected_slot_v       := 0;
-                                best_complete_seq_v   := write_complete_seq;
+                            else
+                                selected_from_write_v := false;
+                                selected_slot_v       := tx_ooo_int_ready_slot;
                             end if;
-
-                            for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
-                                if (ext_slot_state(idx) = SLOT_READY) then
-                                    if (selected_valid_v = false or ext_slot_complete_seq(idx) < best_complete_seq_v) then
-                                        selected_valid_v      := true;
-                                        selected_from_write_v := false;
-                                        selected_internal_v   := false;
-                                        selected_slot_v       := idx;
-                                        best_complete_seq_v   := ext_slot_complete_seq(idx);
-                                    end if;
-                                end if;
-                            end loop;
+                        elsif (ready_external_write_v or tx_ooo_ext_ready_live_v) then
+                            selected_valid_v    := true;
+                            selected_internal_v := false;
+                            if (
+                                ready_external_write_v and
+                                (
+                                    tx_ooo_ext_ready_live_v = false or
+                                    write_complete_seq <= tx_ooo_ext_ready_seq
+                                )
+                            ) then
+                                selected_from_write_v := true;
+                                selected_slot_v       := 0;
+                            else
+                                selected_from_write_v := false;
+                                selected_slot_v       := tx_ooo_ext_ready_slot;
+                            end if;
                         end if;
                     else
-                        best_issue_seq_v := (others => '1');
-
                         if (write_reply_pending = '1') then
                             selected_valid_v      := true;
                             selected_from_write_v := true;
                             selected_internal_v   := (write_is_internal = '1');
                             selected_slot_v       := 0;
-                            best_issue_seq_v      := write_issue_seq;
+                        elsif (tx_issue_int_ready_live_v) then
+                            selected_valid_v      := true;
+                            selected_from_write_v := false;
+                            selected_internal_v   := true;
+                            selected_slot_v       := tx_issue_int_ready_slot;
+                        elsif (tx_issue_ext_ready_live_v) then
+                            selected_valid_v      := true;
+                            selected_from_write_v := false;
+                            selected_internal_v   := false;
+                            selected_slot_v       := tx_issue_ext_ready_slot;
                         end if;
-
-                        for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
-                            if (int_slot_valid(idx) = '1') then
-                                if (selected_valid_v = false or int_slot_issue_seq(idx) < best_issue_seq_v) then
-                                    selected_valid_v      := true;
-                                    selected_from_write_v := false;
-                                    selected_internal_v   := true;
-                                    selected_slot_v       := idx;
-                                    best_issue_seq_v      := int_slot_issue_seq(idx);
-                                end if;
-                            end if;
-                        end loop;
-
-                        for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
-                            if (ext_slot_state(idx) = SLOT_READY) then
-                                if (selected_valid_v = false or ext_slot_issue_seq(idx) < best_issue_seq_v) then
-                                    selected_valid_v      := true;
-                                    selected_from_write_v := false;
-                                    selected_internal_v   := false;
-                                    selected_slot_v       := idx;
-                                    best_issue_seq_v      := ext_slot_issue_seq(idx);
-                                end if;
-                            end if;
-                        end loop;
                     end if;
 
                     if (selected_valid_v) then
-                        tx_reply_start_pulse <= '1';
-                        tx_slot_index        <= selected_slot_v;
-                        tx_word_index        <= (others => '0');
-
+                        tx_slot_index <= selected_slot_v;
+                        tx_word_index <= (others => '0');
                         if (selected_from_write_v) then
-                            tx_source             <= TX_SRC_WRITE;
-                            tx_reply_info_reg     <= write_pkt_info;
-                            tx_reply_response_reg <= write_response_reg;
-                            tx_reply_has_data_reg <= write_reply_has_data;
-                            tx_reply_suppress_reg <= write_reply_suppress;
-                            if (write_reply_has_data = '1' and unsigned(write_pkt_info.rw_length) /= 0) then
-                                tx_state <= TX_STREAMING;
-                            else
-                                tx_state <= TX_WAIT_DONE;
-                            end if;
+                            tx_source <= TX_SRC_WRITE;
                         elsif (selected_internal_v) then
-                            tx_source             <= TX_SRC_INT_READ;
-                            tx_reply_info_reg     <= int_slot_pkt_info(selected_slot_v);
-                            tx_reply_response_reg <= int_slot_response(selected_slot_v);
-                            tx_reply_has_data_reg <= '1';
-                            tx_reply_suppress_reg <= int_slot_reply_suppress(selected_slot_v);
-                            if (unsigned(int_slot_pkt_info(selected_slot_v).rw_length) = 0) then
-                                tx_state <= TX_WAIT_DONE;
-                            else
-                                tx_state <= TX_STREAMING;
-                            end if;
+                            tx_source <= TX_SRC_INT_READ;
                         else
-                            tx_source             <= TX_SRC_EXT_READ;
-                            tx_reply_info_reg     <= ext_slot_pkt_info(selected_slot_v);
-                            tx_reply_response_reg <= ext_slot_response(selected_slot_v);
-                            tx_reply_has_data_reg <= '1';
-                            tx_reply_suppress_reg <= ext_slot_reply_suppress(selected_slot_v);
-                            if (unsigned(ext_slot_pkt_info(selected_slot_v).rw_length) = 0) then
-                                tx_state <= TX_WAIT_DONE;
-                            else
-                                tx_state <= TX_STREAMING;
-                            end if;
+                            tx_source <= TX_SRC_EXT_READ;
                         end if;
+                        tx_state <= TX_SELECTING;
                     end if;
+                elsif (tx_state = TX_SELECTING) then
+                    if (i_tx_reply_ready = '1') then
+                        tx_reply_start_pulse <= '1';
+                        case tx_source is
+                            when TX_SRC_WRITE =>
+                                tx_reply_info_reg     <= write_pkt_info;
+                                tx_reply_response_reg <= write_response_reg;
+                                tx_reply_has_data_reg <= write_reply_has_data;
+                                tx_reply_suppress_reg <= write_reply_suppress;
+                                if (write_reply_has_data = '1' and unsigned(write_pkt_info.rw_length) /= 0) then
+                                    tx_state <= TX_STREAMING;
+                                else
+                                    tx_state <= TX_WAIT_DONE;
+                                end if;
+                            when TX_SRC_INT_READ =>
+                                tx_reply_info_reg     <= int_slot_pkt_info(tx_slot_index);
+                                tx_reply_response_reg <= int_slot_response(tx_slot_index);
+                                tx_reply_has_data_reg <= '1';
+                                tx_reply_suppress_reg <= int_slot_reply_suppress(tx_slot_index);
+                                if (unsigned(int_slot_pkt_info(tx_slot_index).rw_length) = 0) then
+                                    tx_state <= TX_WAIT_DONE;
+                                else
+                                    tx_state <= TX_PRIMING;
+                                end if;
+                            when TX_SRC_EXT_READ =>
+                                tx_reply_info_reg     <= ext_slot_pkt_info(tx_slot_index);
+                                tx_reply_response_reg <= ext_slot_response(tx_slot_index);
+                                tx_reply_has_data_reg <= '1';
+                                tx_reply_suppress_reg <= ext_slot_reply_suppress(tx_slot_index);
+                                if (unsigned(ext_slot_pkt_info(tx_slot_index).rw_length) = 0) then
+                                    tx_state <= TX_WAIT_DONE;
+                                else
+                                    tx_state <= TX_PRIMING;
+                                end if;
+                            when others =>
+                                tx_reply_info_reg     <= SC_PKT_INFO_RESET_CONST;
+                                tx_reply_response_reg <= SC_RSP_OK_CONST;
+                                tx_reply_has_data_reg <= '0';
+                                tx_reply_suppress_reg <= '0';
+                                tx_state              <= TX_IDLE;
+                        end case;
+                    end if;
+                elsif (tx_state = TX_PRIMING) then
+                    tx_state <= TX_STREAMING;
                 elsif (tx_state = TX_STREAMING) then
                     if (i_tx_data_ready = '1') then
                         if (tx_word_index + 1 >= unsigned(tx_reply_info_reg.rw_length)) then
@@ -942,8 +1208,10 @@ begin
                                 write_reply_data_word <= (others => '0');
                             when TX_SRC_INT_READ =>
                                 int_slot_valid(tx_slot_index) <= '0';
+                                int_slot_valid_v(tx_slot_index) := '0';
                             when TX_SRC_EXT_READ =>
                                 ext_slot_state(tx_slot_index) <= SLOT_FREE;
+                                ext_slot_state_v(tx_slot_index) := SLOT_FREE;
                             when others =>
                                 null;
                         end case;
@@ -984,7 +1252,7 @@ begin
 
                     if (read_pkt_v) then
                         if (internal_pkt_v) then
-                            if (have_free_int_v and (allow_ooo_v or busy_for_order_v = false)) then
+                            if (have_free_int_v and int_fill_active = '0' and (allow_ooo_v or busy_for_order_v = false)) then
                                 int_slot_pkt_info(free_int_slot_v)       <= accepted_pkt_info_v;
                                 if (pkt_reply_suppressed_func(i_pkt_info)) then
                                     int_slot_reply_suppress(free_int_slot_v) <= '1';
@@ -997,122 +1265,26 @@ begin
                                     int_slot_response(free_int_slot_v)   <= SC_RSP_OK_CONST;
                                 end if;
                                 int_slot_issue_seq(free_int_slot_v)      <= issue_seq_counter;
+                                int_slot_issue_seq_v(free_int_slot_v)    := issue_seq_counter;
                                 issue_seq_counter                        <= issue_seq_counter + 1;
-
-                                if (unsupported_feature_v = false) then
-                                    status_word_v      := (others => '0');
-                                    fifo_status_word_v := (others => '0');
-                                    if (busy_for_order_v) then
-                                        status_word_v(0) := '1';
-                                    else
-                                        status_word_v(0) := '0';
-                                    end if;
-                                    if (hub_err_flags /= std_logic_vector(to_unsigned(0, hub_err_flags'length))) then
-                                        status_word_v(1) := '1';
-                                    else
-                                        status_word_v(1) := '0';
-                                    end if;
-                                    status_word_v(2) := i_dl_fifo_full;
-                                    status_word_v(3) := i_bp_full;
-                                    status_word_v(4) := hub_enable;
-                                    status_word_v(5) := i_bus_busy;
-
-                                    fifo_status_word_v(0) := i_dl_fifo_full;
-                                    fifo_status_word_v(1) := i_bp_full;
-                                    fifo_status_word_v(2) := i_dl_fifo_overflow;
-                                    fifo_status_word_v(3) := i_bp_overflow;
-                                    fifo_status_word_v(5) := '1';
-
-                                    for word_idx in 0 to MAX_BURST_WORDS_CONST - 1 loop
-                                        if (word_idx < to_integer(pkt_len_v)) then
-                                            offset_v   := to_integer(unsigned(i_pkt_info.start_address(15 downto 0))) -
-                                                          HUB_CSR_BASE_ADDR_CONST + word_idx;
-                                            csr_word_v := (others => '0');
-                                            case offset_v is
-                                                when HUB_CSR_WO_ID_CONST =>
-                                                    csr_word_v := HUB_ID_CONST;
-                                                when HUB_CSR_WO_VERSION_CONST =>
-                                                    csr_word_v := pack_version_func(
-                                                        HUB_VERSION_YY_CONST,
-                                                        HUB_VERSION_MAJOR_CONST,
-                                                        HUB_VERSION_PRE_CONST,
-                                                        HUB_VERSION_MONTH_CONST,
-                                                        HUB_VERSION_DAY_CONST
-                                                    );
-                                                when HUB_CSR_WO_CTRL_CONST =>
-                                                    csr_word_v(0) := hub_enable;
-                                                when HUB_CSR_WO_STATUS_CONST =>
-                                                    csr_word_v := status_word_v;
-                                                when HUB_CSR_WO_ERR_FLAGS_CONST =>
-                                                    csr_word_v := hub_err_flags;
-                                                when HUB_CSR_WO_ERR_COUNT_CONST =>
-                                                    csr_word_v := std_logic_vector(hub_err_count);
-                                                when HUB_CSR_WO_SCRATCH_CONST =>
-                                                    csr_word_v := hub_scratch;
-                                                when HUB_CSR_WO_GTS_SNAP_LO_CONST =>
-                                                    csr_word_v := std_logic_vector(hub_gts_snapshot(31 downto 0));
-                                                when HUB_CSR_WO_GTS_SNAP_HI_CONST =>
-                                                    csr_word_v(15 downto 0) := std_logic_vector(hub_gts_snapshot(47 downto 32));
-                                                    hub_gts_snapshot        <= hub_gts_counter;
-                                                when HUB_CSR_WO_FIFO_CFG_CONST =>
-                                                    csr_word_v(0) := '1';
-                                                    csr_word_v(1) := hub_upload_store_forward;
-                                                when HUB_CSR_WO_FIFO_STATUS_CONST =>
-                                                    csr_word_v := fifo_status_word_v;
-                                                when HUB_CSR_WO_DOWN_PKT_CNT_CONST =>
-                                                    if (busy_for_order_v) then
-                                                        csr_word_v(0) := '1';
-                                                    end if;
-                                                when HUB_CSR_WO_UP_PKT_CNT_CONST =>
-                                                    csr_word_v(9 downto 0) := i_bp_pkt_count;
-                                                when HUB_CSR_WO_DOWN_USEDW_CONST =>
-                                                    csr_word_v(9 downto 0) := i_dl_fifo_usedw;
-                                                when HUB_CSR_WO_UP_USEDW_CONST =>
-                                                    csr_word_v(9 downto 0) := i_bp_usedw;
-                                                when HUB_CSR_WO_EXT_PKT_RD_CONST =>
-                                                    csr_word_v := std_logic_vector(ext_pkt_read_count);
-                                                when HUB_CSR_WO_EXT_PKT_WR_CONST =>
-                                                    csr_word_v := std_logic_vector(ext_pkt_write_count);
-                                                when HUB_CSR_WO_EXT_WORD_RD_CONST =>
-                                                    csr_word_v := std_logic_vector(ext_word_read_count);
-                                                when HUB_CSR_WO_EXT_WORD_WR_CONST =>
-                                                    csr_word_v := std_logic_vector(ext_word_write_count);
-                                                when HUB_CSR_WO_LAST_RD_ADDR_CONST =>
-                                                    csr_word_v := last_ext_read_addr;
-                                                when HUB_CSR_WO_LAST_RD_DATA_CONST =>
-                                                    csr_word_v := last_ext_read_data;
-                                                when HUB_CSR_WO_LAST_WR_ADDR_CONST =>
-                                                    csr_word_v := last_ext_write_addr;
-                                                when HUB_CSR_WO_LAST_WR_DATA_CONST =>
-                                                    csr_word_v := last_ext_write_data;
-                                                when HUB_CSR_WO_PKT_DROP_CNT_CONST =>
-                                                    csr_word_v(15 downto 0) := i_pkt_drop_count;
-                                                when HUB_CSR_WO_OOO_CTRL_CONST =>
-                                                    if (OOO_ENABLE_G = true) then
-                                                        csr_word_v(0) := ooo_ctrl_enable;
-                                                    else
-                                                        csr_word_v(0) := '0';
-                                                    end if;
-                                                when HUB_CSR_WO_HUB_CAP_CONST =>
-                                                    if (HUB_CAP_ENABLE_G = true) then
-                                                        csr_word_v := hub_cap_word_v;
-                                                    end if;
-                                                when others =>
-                                                    csr_word_v := x"EEEEEEEE";
-                                                    int_slot_response(free_int_slot_v) <= SC_RSP_SLVERR_CONST;
-                                                    internal_addr_error_v := true;
-                                            end case;
-                                            int_slot_payload_mem(free_int_slot_v)(word_idx) <= csr_word_v;
-                                        end if;
-                                    end loop;
-                                end if;
-
                                 if (pkt_reply_suppressed_func(i_pkt_info)) then
                                     int_slot_valid(free_int_slot_v) <= '0';
-                                else
+                                    int_slot_valid_v(free_int_slot_v) := '0';
+                                elsif (unsupported_feature_v or pkt_len_v = 0) then
                                     int_slot_valid(free_int_slot_v)      <= '1';
                                     int_slot_complete_seq(free_int_slot_v) <= complete_seq_counter;
+                                    int_slot_valid_v(free_int_slot_v)      := '1';
+                                    int_slot_complete_seq_v(free_int_slot_v) := complete_seq_counter;
                                     complete_seq_counter                 <= complete_seq_counter + 1;
+                                else
+                                    int_slot_valid(free_int_slot_v) <= '0';
+                                    int_slot_valid_v(free_int_slot_v) := '0';
+                                    int_fill_active                  <= '1';
+                                    int_fill_slot                    <= free_int_slot_v;
+                                    int_fill_pkt_info                <= accepted_pkt_info_v;
+                                    int_fill_csr_offset              <= to_integer(unsigned(accepted_pkt_info_v.start_address(15 downto 0))) -
+                                                                       HUB_CSR_BASE_ADDR_CONST;
+                                    int_fill_index                   <= 0;
                                 end if;
                             end if;
                         else
@@ -1136,8 +1308,8 @@ begin
                                     write_reply_data_word <= (others => '0');
                                     write_stream_index    <= (others => '0');
                                     if (unsupported_feature_v = false) then
-                                        ext_pkt_read_count  <= sat_inc32_func(ext_pkt_read_count);
-                                        ext_pkt_write_count <= sat_inc32_func(ext_pkt_write_count);
+                                        ext_pkt_read_count  <= wrap_inc32_func(ext_pkt_read_count);
+                                        ext_pkt_write_count <= wrap_inc32_func(ext_pkt_write_count);
                                     end if;
 
                                     if (unsupported_feature_v or pkt_len_v = 0) then
@@ -1164,22 +1336,27 @@ begin
                                 end if;
                                 ext_slot_words_received(free_ext_slot_v)  <= (others => '0');
                                 ext_slot_issue_seq(free_ext_slot_v)       <= issue_seq_counter;
+                                ext_slot_issue_seq_v(free_ext_slot_v)     := issue_seq_counter;
                                 issue_seq_counter                         <= issue_seq_counter + 1;
 
                                 if (unsupported_feature_v = false) then
-                                    ext_pkt_read_count <= sat_inc32_func(ext_pkt_read_count);
+                                    ext_pkt_read_count <= wrap_inc32_func(ext_pkt_read_count);
                                 end if;
 
                                 if (unsupported_feature_v or pkt_len_v = 0) then
                                     if (pkt_reply_suppressed_func(i_pkt_info)) then
                                         ext_slot_state(free_ext_slot_v) <= SLOT_FREE;
+                                        ext_slot_state_v(free_ext_slot_v) := SLOT_FREE;
                                     else
                                         ext_slot_state(free_ext_slot_v)      <= SLOT_READY;
                                         ext_slot_complete_seq(free_ext_slot_v) <= complete_seq_counter;
+                                        ext_slot_state_v(free_ext_slot_v)      := SLOT_READY;
+                                        ext_slot_complete_seq_v(free_ext_slot_v) := complete_seq_counter;
                                         complete_seq_counter                 <= complete_seq_counter + 1;
                                     end if;
                                 else
                                     ext_slot_state(free_ext_slot_v) <= SLOT_WAIT_ISSUE;
+                                    ext_slot_state_v(free_ext_slot_v) := SLOT_WAIT_ISSUE;
                                 end if;
                             end if;
                         end if;
@@ -1234,9 +1411,9 @@ begin
                                     write_reply_has_data  <= '0';
                                     write_reply_data_word <= (others => '0');
                                     if (unsupported_feature_v = false) then
-                                        ext_pkt_write_count <= sat_inc32_func(ext_pkt_write_count);
+                                        ext_pkt_write_count <= wrap_inc32_func(ext_pkt_write_count);
                                         if (pkt_is_atomic_func(i_pkt_info)) then
-                                            ext_pkt_read_count <= sat_inc32_func(ext_pkt_read_count);
+                                            ext_pkt_read_count <= wrap_inc32_func(ext_pkt_read_count);
                                         end if;
                                     end if;
 
@@ -1260,15 +1437,22 @@ begin
                     end if;
                 end if;
 
+                if (
+                    write_state /= WR_ATOMIC_RD_WAIT_CMD and
+                    rd_cmd_pending_valid_v = '0' and
+                    rd_issue_live = '1'
+                ) then
+                    rd_cmd_pending_valid_v := '1';
+                    rd_cmd_pending_slot_v  := rd_issue_slot;
+                end if;
+
                 if (internal_addr_error_v = true) then
                     hub_err_flags(HUB_ERR_INTERNAL_ADDR_CONST) <= '1';
                     err_pulse_v := true;
                 end if;
 
                 if (err_pulse_v = true) then
-                    if (hub_err_count(7 downto 0) /= to_unsigned(16#FF#, 8)) then
-                        hub_err_count <= resize(hub_err_count(7 downto 0) + 1, hub_err_count'length);
-                    end if;
+                    err_count_inc_pending_v := '1';
                 end if;
 
                 if (soft_reset_request_v = true) then
@@ -1279,14 +1463,34 @@ begin
                     ext_slot_words_received   <= (others => (others => '0'));
                     ext_slot_issue_seq        <= (others => (others => '0'));
                     ext_slot_complete_seq     <= (others => (others => '0'));
-                    ext_slot_payload_mem      <= (others => (others => (others => '0')));
+                    ext_slot_state_v          := (others => SLOT_FREE);
+                    ext_slot_issue_seq_v      := (others => (others => '0'));
+                    ext_slot_complete_seq_v   := (others => (others => '0'));
+                    ext_slot_payload_wr_en    <= (others => '0');
+                    ext_slot_payload_wr_addr  <= (others => 0);
+                    ext_slot_payload_wr_data  <= (others => (others => '0'));
                     int_slot_valid            <= (others => '0');
                     int_slot_pkt_info         <= (others => SC_PKT_INFO_RESET_CONST);
                     int_slot_reply_suppress   <= (others => '0');
                     int_slot_response         <= (others => SC_RSP_OK_CONST);
                     int_slot_issue_seq        <= (others => (others => '0'));
                     int_slot_complete_seq     <= (others => (others => '0'));
-                    int_slot_payload_mem      <= (others => (others => (others => '0')));
+                    int_slot_valid_v          := (others => '0');
+                    int_slot_issue_seq_v      := (others => (others => '0'));
+                    int_slot_complete_seq_v   := (others => (others => '0'));
+                    int_slot_payload_wr_en    <= (others => '0');
+                    int_slot_payload_wr_addr  <= (others => 0);
+                    int_slot_payload_wr_data  <= (others => (others => '0'));
+                    int_fill_active           <= '0';
+                    int_fill_slot             <= 0;
+                    int_fill_pkt_info         <= SC_PKT_INFO_RESET_CONST;
+                    int_fill_csr_offset       <= 0;
+                    int_fill_index            <= 0;
+                    int_fill_wr_pending       <= '0';
+                    int_fill_wr_slot          <= 0;
+                    int_fill_wr_addr          <= 0;
+                    int_fill_wr_data          <= (others => '0');
+                    int_fill_wr_last          <= '0';
                     tx_state                  <= TX_IDLE;
                     tx_source                 <= TX_SRC_NONE;
                     tx_slot_index             <= 0;
@@ -1325,11 +1529,178 @@ begin
                     last_ext_read_data        <= (others => '0');
                     last_ext_write_addr       <= (others => '0');
                     last_ext_write_data       <= (others => '0');
+                    diag_clear_pending_v      := '0';
+                    err_count_inc_pending_v   := '0';
                     issue_seq_counter         <= (others => '0');
                     complete_seq_counter      <= (others => '0');
                     soft_reset_pulse          <= '1';
+                    rd_cmd_pending_valid_v    := '0';
+                    rd_cmd_pending_slot_v     := 0;
                 end if;
+
+                rd_cmd_pending_valid <= rd_cmd_pending_valid_v;
+                rd_cmd_pending_slot  <= rd_cmd_pending_slot_v;
+                diag_clear_pending   <= diag_clear_pending_v;
+                err_count_inc_pending <= err_count_inc_pending_v;
+
             end if;
         end if;
     end process core_ctrl;
+
+    rd_issue_head_reg : process(i_clk)
+        variable rd_issue_valid_v      : boolean;
+        variable rd_issue_slot_v       : natural range 0 to OOO_SLOT_COUNT_G - 1;
+        variable rd_issue_seq_v        : unsigned(7 downto 0);
+    begin
+        if rising_edge(i_clk) then
+            if (i_rst = '1') then
+                rd_issue_valid <= '0';
+                rd_issue_slot  <= 0;
+            else
+                rd_issue_valid_v  := false;
+                rd_issue_slot_v   := 0;
+                rd_issue_seq_v    := (others => '1');
+
+                for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
+                    if (
+                        ext_slot_state(idx) = SLOT_WAIT_ISSUE and
+                        not (rd_cmd_pending_valid = '1' and idx = rd_cmd_pending_slot)
+                    ) then
+                        if (rd_issue_valid_v = false or ext_slot_issue_seq(idx) < rd_issue_seq_v) then
+                            rd_issue_valid_v := true;
+                            rd_issue_slot_v  := idx;
+                            rd_issue_seq_v   := ext_slot_issue_seq(idx);
+                        end if;
+                    end if;
+                end loop;
+
+                if (rd_issue_valid_v) then
+                    rd_issue_valid <= '1';
+                    rd_issue_slot  <= rd_issue_slot_v;
+                else
+                    rd_issue_valid <= '0';
+                    rd_issue_slot  <= 0;
+                end if;
+            end if;
+        end if;
+    end process rd_issue_head_reg;
+
+    tx_ready_head_reg : process(i_clk)
+        variable tx_ooo_int_ready_valid_v : boolean;
+        variable tx_ooo_int_ready_slot_v  : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1;
+        variable tx_ooo_int_ready_seq_v   : unsigned(7 downto 0);
+        variable tx_ooo_ext_ready_valid_v : boolean;
+        variable tx_ooo_ext_ready_slot_v  : natural range 0 to OOO_SLOT_COUNT_G - 1;
+        variable tx_ooo_ext_ready_seq_v   : unsigned(7 downto 0);
+        variable tx_issue_int_ready_valid_v : boolean;
+        variable tx_issue_int_ready_slot_v  : natural range 0 to OUTSTANDING_INT_RESERVED_G - 1;
+        variable tx_issue_int_ready_seq_v   : unsigned(7 downto 0);
+        variable tx_issue_ext_ready_valid_v : boolean;
+        variable tx_issue_ext_ready_slot_v  : natural range 0 to OOO_SLOT_COUNT_G - 1;
+        variable tx_issue_ext_ready_seq_v   : unsigned(7 downto 0);
+    begin
+        if rising_edge(i_clk) then
+            if (i_rst = '1') then
+                tx_ooo_int_ready_valid <= '0';
+                tx_ooo_int_ready_slot  <= 0;
+                tx_ooo_int_ready_seq   <= (others => '0');
+                tx_ooo_ext_ready_valid <= '0';
+                tx_ooo_ext_ready_slot  <= 0;
+                tx_ooo_ext_ready_seq   <= (others => '0');
+                tx_issue_int_ready_valid <= '0';
+                tx_issue_int_ready_slot  <= 0;
+                tx_issue_int_ready_seq   <= (others => '0');
+                tx_issue_ext_ready_valid <= '0';
+                tx_issue_ext_ready_slot  <= 0;
+                tx_issue_ext_ready_seq   <= (others => '0');
+            else
+                tx_ooo_int_ready_valid_v := false;
+                tx_ooo_int_ready_slot_v  := 0;
+                tx_ooo_int_ready_seq_v   := (others => '0');
+                for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
+                    if (int_slot_valid(idx) = '1') then
+                        tx_ooo_int_ready_valid_v := true;
+                        tx_ooo_int_ready_slot_v  := idx;
+                        tx_ooo_int_ready_seq_v   := int_slot_complete_seq(idx);
+                        exit;
+                    end if;
+                end loop;
+
+                tx_ooo_ext_ready_valid_v := false;
+                tx_ooo_ext_ready_slot_v  := 0;
+                tx_ooo_ext_ready_seq_v   := (others => '0');
+                for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
+                    if (ext_slot_state(idx) = SLOT_READY) then
+                        tx_ooo_ext_ready_valid_v := true;
+                        tx_ooo_ext_ready_slot_v  := idx;
+                        tx_ooo_ext_ready_seq_v   := ext_slot_complete_seq(idx);
+                        exit;
+                    end if;
+                end loop;
+
+                tx_issue_int_ready_valid_v := false;
+                tx_issue_int_ready_slot_v  := 0;
+                tx_issue_int_ready_seq_v   := (others => '0');
+                for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
+                    if (int_slot_valid(idx) = '1') then
+                        tx_issue_int_ready_valid_v := true;
+                        tx_issue_int_ready_slot_v  := idx;
+                        tx_issue_int_ready_seq_v   := int_slot_issue_seq(idx);
+                        exit;
+                    end if;
+                end loop;
+                tx_issue_ext_ready_valid_v := false;
+                tx_issue_ext_ready_slot_v  := 0;
+                tx_issue_ext_ready_seq_v   := (others => '0');
+                for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
+                    if (ext_slot_state(idx) = SLOT_READY) then
+                        tx_issue_ext_ready_valid_v := true;
+                        tx_issue_ext_ready_slot_v  := idx;
+                        tx_issue_ext_ready_seq_v   := ext_slot_issue_seq(idx);
+                        exit;
+                    end if;
+                end loop;
+
+                if (tx_ooo_int_ready_valid_v) then
+                    tx_ooo_int_ready_valid <= '1';
+                    tx_ooo_int_ready_slot  <= tx_ooo_int_ready_slot_v;
+                    tx_ooo_int_ready_seq   <= tx_ooo_int_ready_seq_v;
+                else
+                    tx_ooo_int_ready_valid <= '0';
+                    tx_ooo_int_ready_slot  <= 0;
+                    tx_ooo_int_ready_seq   <= (others => '0');
+                end if;
+
+                if (tx_ooo_ext_ready_valid_v) then
+                    tx_ooo_ext_ready_valid <= '1';
+                    tx_ooo_ext_ready_slot  <= tx_ooo_ext_ready_slot_v;
+                    tx_ooo_ext_ready_seq   <= tx_ooo_ext_ready_seq_v;
+                else
+                    tx_ooo_ext_ready_valid <= '0';
+                    tx_ooo_ext_ready_slot  <= 0;
+                    tx_ooo_ext_ready_seq   <= (others => '0');
+                end if;
+
+                if (tx_issue_int_ready_valid_v) then
+                    tx_issue_int_ready_valid <= '1';
+                    tx_issue_int_ready_slot  <= tx_issue_int_ready_slot_v;
+                    tx_issue_int_ready_seq   <= tx_issue_int_ready_seq_v;
+                else
+                    tx_issue_int_ready_valid <= '0';
+                    tx_issue_int_ready_slot  <= 0;
+                    tx_issue_int_ready_seq   <= (others => '0');
+                end if;
+
+                if (tx_issue_ext_ready_valid_v) then
+                    tx_issue_ext_ready_valid <= '1';
+                    tx_issue_ext_ready_slot  <= tx_issue_ext_ready_slot_v;
+                    tx_issue_ext_ready_seq   <= tx_issue_ext_ready_seq_v;
+                else
+                    tx_issue_ext_ready_valid <= '0';
+                    tx_issue_ext_ready_slot  <= 0;
+                    tx_issue_ext_ready_seq   <= (others => '0');
+                end if;
+            end if;
+        end if;
+    end process tx_ready_head_reg;
 end architecture rtl;

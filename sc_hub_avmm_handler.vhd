@@ -1,9 +1,11 @@
 -- File name: sc_hub_avmm_handler.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.0
+-- Version : 26.2.1
 -- Date    : 20260331
--- Change  : Add the Avalon-MM master transaction handler for sc_hub v2.
+-- Change  : Bound the timeout counter to the configured read/write timeout
+--           range so the timeout-enable cone does not inherit an unnecessary
+--           wide integer datapath.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -52,11 +54,26 @@ end entity sc_hub_avmm_handler;
 architecture rtl of sc_hub_avmm_handler is
     type avmm_state_t is (IDLING, LAUNCHING_READ, READING_DATA, WRITING_DATA, WAITING_WRITE_RSP);
 
+    function max_pos_func (
+        lhs : positive;
+        rhs : positive
+    ) return positive is
+    begin
+        if (lhs >= rhs) then
+            return lhs;
+        else
+            return rhs;
+        end if;
+    end function max_pos_func;
+
+    constant TIMEOUT_COUNTER_MAX_C : positive := max_pos_func(RD_TIMEOUT_CYCLES_G, WR_TIMEOUT_CYCLES_G);
+    subtype timeout_counter_t is natural range 0 to TIMEOUT_COUNTER_MAX_C;
+
     signal avmm_state          : avmm_state_t := IDLING;
     signal cmd_address_reg     : std_logic_vector(15 downto 0) := (others => '0');
     signal cmd_length_reg      : unsigned(15 downto 0) := (others => '0');
     signal words_seen          : unsigned(15 downto 0) := (others => '0');
-    signal timeout_counter     : natural := 0;
+    signal timeout_counter     : timeout_counter_t := 0;
     signal response_reg        : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal rd_data_valid_pulse : std_logic := '0';
     signal rd_data_reg         : std_logic_vector(31 downto 0) := (others => '0');

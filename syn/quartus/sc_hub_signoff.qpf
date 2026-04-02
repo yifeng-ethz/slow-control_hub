@@ -18,15 +18,15 @@
 #
 # Quartus Prime
 # Version 18.1.0 Build 625 09/12/2018 SJ Standard Edition
-# Date created = 01:07:49  April 02, 2026
+# Date created = 17:18:11  April 02, 2026
 #
 # -------------------------------------------------------------------------- #
 
 QUARTUS_VERSION = "18.1"
-DATE = "01:07:49  April 02, 2026"
+DATE = "17:18:11  April 02, 2026"
 
 # Revisions
 
 PROJECT_REVISION = "sc_hub_tiles_minimal"
-PROJECT_REVISION = "sc_hub_minimal_live"
 PROJECT_REVISION = "sc_hub_full_live_axi4"
+PROJECT_REVISION = "sc_hub_minimal_live"

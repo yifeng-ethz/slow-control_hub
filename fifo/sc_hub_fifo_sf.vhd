@@ -1,10 +1,10 @@
 -- File name: sc_hub_fifo_sf.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.1
--- Date    : 20260401
--- Change  : Merge commit and read accounting so same-cycle commit+drain does
---           not drop one committed word from the visible usedw/full state.
+-- Version : 26.2.4
+-- Date    : 20260402
+-- Change  : Let used_words_total own the committed-plus-shadow sum so commit
+--           does not rebuild that arithmetic before updating committed_words.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -47,6 +47,7 @@ architecture rtl of sc_hub_fifo_sf is
     signal shadow_wr_ptr    : fifo_index_t := 0;
     signal committed_words  : natural range 0 to DEPTH_G := 0;
     signal shadow_words     : natural range 0 to DEPTH_G := 0;
+    signal used_words_total : natural range 0 to DEPTH_G := 0;
     signal overflow_sticky  : std_logic := '0';
     signal read_data_int    : std_logic_vector(WIDTH_G - 1 downto 0);
 
@@ -65,8 +66,8 @@ begin
 
     read_data <= read_data_int;
     empty     <= '1' when (committed_words = 0) else '0';
-    full      <= '1' when ((committed_words + shadow_words) = DEPTH_G) else '0';
-    usedw     <= std_logic_vector(to_unsigned(committed_words + shadow_words, usedw'length));
+    full      <= '1' when (used_words_total = DEPTH_G) else '0';
+    usedw     <= std_logic_vector(to_unsigned(used_words_total, usedw'length));
     overflow  <= overflow_sticky;
 
     fifo_storage : process(csi_clk)
@@ -75,6 +76,7 @@ begin
         variable shadow_wr_ptr_v   : fifo_index_t;
         variable committed_words_v : natural range 0 to DEPTH_G;
         variable shadow_words_v    : natural range 0 to DEPTH_G;
+        variable used_words_total_v : natural range 0 to DEPTH_G;
         variable overflow_v        : std_logic;
     begin
         if rising_edge(csi_clk) then
@@ -84,6 +86,7 @@ begin
                 shadow_wr_ptr   <= 0;
                 committed_words <= 0;
                 shadow_words    <= 0;
+                used_words_total <= 0;
                 overflow_sticky <= '0';
             else
                 rd_ptr_v          := rd_ptr;
@@ -91,19 +94,19 @@ begin
                 shadow_wr_ptr_v   := shadow_wr_ptr;
                 committed_words_v := committed_words;
                 shadow_words_v    := shadow_words;
+                used_words_total_v := used_words_total;
                 overflow_v        := overflow_sticky;
 
                 if (capture_start = '1') then
-                    shadow_wr_ptr_v := commit_wr_ptr_v;
-                    shadow_words_v  := 0;
-                    overflow_v      := '0';
+                    overflow_v := '0';
                 end if;
 
                 if (write_en = '1') then
-                    if ((committed_words_v + shadow_words_v) < DEPTH_G) then
+                    if (used_words_total_v < DEPTH_G) then
                         fifo_mem(shadow_wr_ptr_v) <= write_data;
                         shadow_wr_ptr_v           := next_index_func(shadow_wr_ptr_v);
                         shadow_words_v            := shadow_words_v + 1;
+                        used_words_total_v        := used_words_total_v + 1;
                     else
                         overflow_v := '1';
                     end if;
@@ -111,17 +114,19 @@ begin
 
                 if (commit = '1') then
                     commit_wr_ptr_v   := shadow_wr_ptr_v;
-                    committed_words_v := min_nat_func(DEPTH_G, committed_words_v + shadow_words_v);
+                    committed_words_v := used_words_total_v;
                     shadow_words_v    := 0;
                 elsif (rollback = '1') then
                     shadow_wr_ptr_v := commit_wr_ptr_v;
                     shadow_words_v  := 0;
+                    used_words_total_v := committed_words_v;
                     overflow_v      := '0';
                 end if;
 
                 if (read_en = '1' and committed_words > 0) then
                     rd_ptr_v          := next_index_func(rd_ptr_v);
                     committed_words_v := committed_words_v - 1;
+                    used_words_total_v := used_words_total_v - 1;
                 end if;
 
                 rd_ptr          <= rd_ptr_v;
@@ -129,6 +134,7 @@ begin
                 shadow_wr_ptr   <= shadow_wr_ptr_v;
                 committed_words <= committed_words_v;
                 shadow_words    <= shadow_words_v;
+                used_words_total <= used_words_total_v;
                 overflow_sticky <= overflow_v;
             end if;
         end if;

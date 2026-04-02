@@ -96,6 +96,7 @@ compile_rtl: $(MODELSIM_INI)
 		$(RTL_DIR)/sc_hub_axi4_handler.vhd \
 		$(RTL_DIR)/sc_hub_axi4_ooo_handler.vhd \
 		$(RTL_DIR)/sc_hub_core.vhd \
+		$(RTL_DIR)/sc_hub_payload_ram.vhd \
 		$(RTL_DIR)/sc_hub_axi4_core.vhd \
 		$(RTL_DIR)/sc_hub_top.vhd \
 		$(RTL_DIR)/sc_hub_top_axi4.vhd
