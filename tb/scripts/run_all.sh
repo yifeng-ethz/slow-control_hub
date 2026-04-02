@@ -40,9 +40,9 @@ run_blocked_step() {
 
 run_step "run_basic" "$SCRIPT_DIR/run_basic.sh"
 run_step "run_uvm" "$SCRIPT_DIR/run_uvm.sh"
-run_blocked_step "run_perf (blocked by RTL handoff)" "$SCRIPT_DIR/run_perf.sh"
-run_blocked_step "run_edge (blocked by RTL handoff)" "$SCRIPT_DIR/run_edge.sh"
-run_blocked_step "run_error (blocked by RTL handoff)" "$SCRIPT_DIR/run_error.sh"
+run_step "run_perf" "$SCRIPT_DIR/run_perf.sh"
+run_step "run_edge" "$SCRIPT_DIR/run_edge.sh"
+run_step "run_error" "$SCRIPT_DIR/run_error.sh"
 
 echo "============================================================"
 echo "run_all.sh summary: pass=${PASS_COUNT} skip=${SKIP_COUNT} fail=${FAIL_COUNT}"

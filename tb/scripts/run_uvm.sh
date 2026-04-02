@@ -68,7 +68,10 @@ run_one() {
 
   log_file="$(mktemp "${TMPDIR:-/tmp}/sc_hub_uvm.${test_name}.XXXXXX.log")"
   if (cd "$TB_DIR" && make run_uvm_smoke "${make_args[@]}" 2>&1 | tee "$log_file"); then
-    if rg -q '^# UVM_ERROR :[[:space:]]*[1-9][0-9]*|^# \*\* Error:' "$log_file"; then
+    if rg -q -e '# UVM_ERROR :[[:space:]]*[1-9][0-9]*' \
+             -e '# UVM_FATAL :[[:space:]]*[1-9][0-9]*' \
+             -e '\*\* Error:' \
+             -e '\*\* Fatal:' "$log_file"; then
       fail_count=$((fail_count + 1))
       echo "[FAIL] ${test_name}"
     else

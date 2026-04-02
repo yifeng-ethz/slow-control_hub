@@ -8,7 +8,21 @@ module sc_hub_assertions (
   input logic uplink_ready,
   input logic [35:0] uplink_data,
   input logic uplink_sop,
-  input logic uplink_eop
+  input logic uplink_eop,
+  input logic [15:0] dl_fifo_usedw,
+  input logic        dl_fifo_full,
+  input logic        wr_data_rdreq,
+  input logic        wr_data_empty,
+  input logic        pkt_rx_download_ready,
+  input logic        pkt_rx_payload_space_ready,
+  input logic        tx_reply_start,
+  input logic        tx_reply_ready,
+  input logic        tx_reply_has_data,
+  input logic        tx_reply_suppress,
+  input logic [15:0] tx_reply_len,
+  input logic [15:0] bp_usedw,
+  input logic [15:0] dl_fifo_depth,
+  input logic [15:0] bp_fifo_depth
 `ifdef SC_HUB_BUS_AXI4
   ,
   input logic        axi_rd_done,
@@ -148,10 +162,12 @@ module sc_hub_assertions (
       (uplink_data[35:32] == 4'b0001 && uplink_data[7:0] == K284_CONST);
   endproperty
 
-  property reply_resp_header_valid;
+  property reply_resp_header_fields_known;
     @(posedge clk) disable iff (rst)
       (uplink_valid && uplink_ready && (reply_word_index == 9'd2)) |->
-      (uplink_data[16] === 1'b1);
+      (!$isunknown(uplink_data[17:16]) &&
+       !$isunknown(uplink_data[19:18]) &&
+       (uplink_data[19:18] != 2'b11));
   endproperty
 
   property no_eop_without_open_reply;
@@ -168,6 +184,41 @@ module sc_hub_assertions (
     @(posedge clk) disable iff (rst)
       (uplink_valid && uplink_ready && uplink_sop && !uplink_eop) |->
       (!reply_in_progress);
+  endproperty
+
+  property dl_fifo_usedw_in_range;
+    @(posedge clk) disable iff (rst)
+      !$isunknown(dl_fifo_usedw) |-> ($unsigned(dl_fifo_usedw) <= $unsigned(dl_fifo_depth));
+  endproperty
+
+  property dl_fifo_full_consistent;
+    @(posedge clk) disable iff (rst)
+      dl_fifo_full |-> ($unsigned(dl_fifo_usedw) == $unsigned(dl_fifo_depth));
+  endproperty
+
+  property bp_fifo_usedw_in_range;
+    @(posedge clk) disable iff (rst)
+      !$isunknown(bp_usedw) |-> ($unsigned(bp_usedw) <= $unsigned(bp_fifo_depth));
+  endproperty
+
+  property dl_fifo_no_read_when_empty;
+    @(posedge clk) disable iff (rst)
+      wr_data_rdreq |-> !wr_data_empty;
+  endproperty
+
+  property payload_space_stall_reaches_rx_ready;
+    @(posedge clk) disable iff (rst)
+      !pkt_rx_payload_space_ready |-> !pkt_rx_download_ready;
+  endproperty
+
+  property rx_backpressure_reaches_link_ready;
+    @(posedge clk) disable iff (rst)
+      !pkt_rx_download_ready |-> !link_ready;
+  endproperty
+
+  property reply_start_gated_by_ready;
+    @(posedge clk) disable iff (rst)
+      tx_reply_start |-> tx_reply_ready;
   endproperty
 
   assert property (command_data_known_outside_reset)
@@ -197,8 +248,8 @@ module sc_hub_assertions (
   assert property (reply_ends_with_k284)
     else $error("sc_hub_assertions: reply did not end with K284");
 
-  assert property (reply_resp_header_valid)
-    else $error("sc_hub_assertions: reply header bit16 was not set when expected");
+  assert property (reply_resp_header_fields_known)
+    else $error("sc_hub_assertions: reply header response/order fields are invalid");
 
   assert property (no_eop_without_open_reply)
     else $error("sc_hub_assertions: EOP observed without an open reply");
@@ -208,6 +259,27 @@ module sc_hub_assertions (
 
   assert property (reply_sop_eop_paired)
     else $error("sc_hub_assertions: SOP observed while previous reply had no EOP");
+
+  assert property (dl_fifo_usedw_in_range)
+    else $error("sc_hub_assertions: dl_fifo_usedw exceeded configured depth");
+
+  assert property (dl_fifo_full_consistent)
+    else $error("sc_hub_assertions: dl_fifo_full asserted before usedw reached depth");
+
+  assert property (bp_fifo_usedw_in_range)
+    else $error("sc_hub_assertions: bp_usedw exceeded configured depth");
+
+  assert property (dl_fifo_no_read_when_empty)
+    else $error("sc_hub_assertions: wr_data_rdreq asserted while write-data FIFO was empty");
+
+  assert property (payload_space_stall_reaches_rx_ready)
+    else $error("sc_hub_assertions: payload-space stall did not lower pkt_rx download ready");
+
+  assert property (rx_backpressure_reaches_link_ready)
+    else $error("sc_hub_assertions: internal RX backpressure did not reach external link_ready");
+
+  assert property (reply_start_gated_by_ready)
+    else $error("sc_hub_assertions: reply started without pkt_tx ready");
 
   always_ff @(posedge clk) begin
     if (rst) begin

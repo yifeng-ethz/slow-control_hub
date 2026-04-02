@@ -57,16 +57,25 @@ package sc_hub_pkg is
     constant HUB_CSR_WO_LAST_WR_DATA_CONST  : natural := 16#016#;
     constant HUB_CSR_WO_PKT_DROP_CNT_CONST  : natural := 16#017#;
     constant HUB_CSR_WO_OOO_CTRL_CONST      : natural := 16#018#;
+    constant HUB_CSR_WO_ORD_DRAIN_CNT_CONST : natural := 16#019#;
+    constant HUB_CSR_WO_ORD_HOLD_CNT_CONST  : natural := 16#01A#;
+    constant HUB_CSR_WO_HUB_CAP_CONST       : natural := 16#01F#;
 
     constant HUB_ERR_UP_FIFO_OVERFLOW_CONST   : natural := 0;
     constant HUB_ERR_DOWN_FIFO_OVERFLOW_CONST : natural := 1;
     constant HUB_ERR_INTERNAL_ADDR_CONST      : natural := 2;
     constant HUB_ERR_RD_TIMEOUT_CONST         : natural := 3;
     constant HUB_ERR_PKT_DROP_CONST           : natural := 4;
+    constant HUB_ERR_SLVERR_CONST             : natural := 5;
+    constant HUB_ERR_DECERR_CONST             : natural := 6;
 
     constant SC_RSP_OK_CONST                : std_logic_vector(1 downto 0) := "00";
     constant SC_RSP_SLVERR_CONST            : std_logic_vector(1 downto 0) := "10";
     constant SC_RSP_DECERR_CONST            : std_logic_vector(1 downto 0) := "11";
+    constant SC_ORDER_RELAXED_CONST         : std_logic_vector(1 downto 0) := "00";
+    constant SC_ORDER_RELEASE_CONST         : std_logic_vector(1 downto 0) := "01";
+    constant SC_ORDER_ACQUIRE_CONST         : std_logic_vector(1 downto 0) := "10";
+    constant SC_ORDER_RESERVED_CONST        : std_logic_vector(1 downto 0) := "11";
 
     type sc_pkt_info_t is record
         sc_type       : std_logic_vector(1 downto 0);
@@ -77,6 +86,13 @@ package sc_hub_pkg is
         mask_t        : std_logic;
         mask_r        : std_logic;
         rw_length     : std_logic_vector(15 downto 0);
+        order_mode    : std_logic_vector(1 downto 0);
+        order_domain  : std_logic_vector(3 downto 0);
+        order_epoch   : std_logic_vector(7 downto 0);
+        order_scope   : std_logic_vector(1 downto 0);
+        atomic_flag   : std_logic;
+        atomic_mask   : std_logic_vector(31 downto 0);
+        atomic_data   : std_logic_vector(31 downto 0);
     end record sc_pkt_info_t;
 
     constant SC_PKT_INFO_RESET_CONST : sc_pkt_info_t := (
@@ -87,7 +103,14 @@ package sc_hub_pkg is
         mask_s        => '0',
         mask_t        => '0',
         mask_r        => '0',
-        rw_length     => (others => '0')
+        rw_length     => (others => '0'),
+        order_mode    => SC_ORDER_RELAXED_CONST,
+        order_domain  => (others => '0'),
+        order_epoch   => (others => '0'),
+        order_scope   => (others => '0'),
+        atomic_flag   => '0',
+        atomic_mask   => (others => '0'),
+        atomic_data   => (others => '0')
     );
 
     function pack_version_func (
@@ -120,6 +143,14 @@ package sc_hub_pkg is
     ) return boolean;
 
     function pkt_reply_suppressed_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean;
+
+    function pkt_has_download_words_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean;
+
+    function pkt_is_atomic_func (
         pkt_info : sc_pkt_info_t
     ) return boolean;
 end package sc_hub_pkg;
@@ -205,4 +236,18 @@ package body sc_hub_pkg is
     begin
         return (pkt_info.mask_m = '1' or pkt_info.mask_s = '1' or pkt_info.mask_t = '1' or pkt_info.mask_r = '1');
     end function pkt_reply_suppressed_func;
+
+    function pkt_has_download_words_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean is
+    begin
+        return (pkt_info.sc_type(0) = '1' or pkt_info.atomic_flag = '1');
+    end function pkt_has_download_words_func;
+
+    function pkt_is_atomic_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean is
+    begin
+        return (pkt_info.atomic_flag = '1');
+    end function pkt_is_atomic_func;
 end package body sc_hub_pkg;

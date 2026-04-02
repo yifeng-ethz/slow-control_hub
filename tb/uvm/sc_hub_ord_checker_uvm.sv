@@ -3,6 +3,7 @@ class sc_hub_ord_checker_uvm extends uvm_component;
 
   uvm_analysis_imp_cmd #(sc_pkt_seq_item, sc_hub_ord_checker_uvm) cmd_imp;
   uvm_analysis_imp_bus #(sc_hub_bus_txn, sc_hub_ord_checker_uvm) bus_imp;
+  sc_hub_uvm_env_cfg cfg;
 
   int unsigned ordered_seen_count;
   int unsigned relaxed_seen_count;
@@ -31,6 +32,9 @@ class sc_hub_ord_checker_uvm extends uvm_component;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
+    if (!uvm_config_db#(sc_hub_uvm_env_cfg)::get(this, "", "cfg", cfg)) begin
+      cfg = sc_hub_uvm_env_cfg::type_id::create("cfg");
+    end
     ordered_seen_count      = 0;
     relaxed_seen_count      = 0;
     atomic_seen_count       = 0;
@@ -64,7 +68,8 @@ class sc_hub_ord_checker_uvm extends uvm_component;
         order_violation_count++;
         `uvm_error(get_type_name(), $sformatf("Unsupported order mode for ordered cmd: %0d", req_h.order_mode));
       end
-      if (req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
+      if (cfg.check_order_epoch_monotonic &&
+          req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
         order_violation_count++;
         `uvm_error(get_type_name(),
                    $sformatf("Ordering epoch regression on domain %0d: last=%0d now=%0d",
@@ -162,7 +167,8 @@ class sc_hub_ord_checker_uvm extends uvm_component;
         end
 
         if (req_h.order_mode != SC_ORDER_RELAXED) begin
-          if (req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
+          if (cfg.check_order_epoch_monotonic &&
+              req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
             order_violation_count++;
             `uvm_error(get_type_name(),
                        $sformatf("Bus txn ordering epoch regression domain=%0d last=%0d now=%0d",

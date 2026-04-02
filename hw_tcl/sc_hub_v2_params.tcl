@@ -42,7 +42,7 @@ set_parameter_property BUS_TYPE DESCRIPTION \
     "Selects the external master interface. The current Platform Designer \
      wrapper is fixed to the live Avalon-MM boundary and does not generate \
      the AXI4 top-level."
-set_parameter_property BUS_TYPE HDL_PARAMETER true
+set_parameter_property BUS_TYPE HDL_PARAMETER false
 set_parameter_property BUS_TYPE ALLOWED_RANGES {"AVALON"}
 
 add_parameter ADDR_WIDTH NATURAL 16
@@ -50,13 +50,13 @@ set_parameter_property ADDR_WIDTH DISPLAY_NAME "Address Width (bits)"
 set_parameter_property ADDR_WIDTH DESCRIPTION \
     "Word address width. The current checked-in Platform Designer wrapper \
      is fixed to the live 16-bit word-address boundary."
-set_parameter_property ADDR_WIDTH HDL_PARAMETER true
+set_parameter_property ADDR_WIDTH HDL_PARAMETER false
 set_parameter_property ADDR_WIDTH ALLOWED_RANGES {16}
 
 add_parameter DATA_WIDTH NATURAL 32
 set_parameter_property DATA_WIDTH DISPLAY_NAME "Data Width (bits)"
 set_parameter_property DATA_WIDTH DESCRIPTION "Fixed at 32 bits for Mu3e SC protocol."
-set_parameter_property DATA_WIDTH HDL_PARAMETER true
+set_parameter_property DATA_WIDTH HDL_PARAMETER false
 set_parameter_property DATA_WIDTH ALLOWED_RANGES {32}
 
 # ============================================================================
@@ -87,7 +87,7 @@ set_parameter_property EXT_DOWN_PLD_DEPTH DESCRIPTION \
     "Linked-list payload RAM depth for external download (write data). \
      Must be >= MAX_BURST for full burst support. \
      TLM SIZE-02 identifies the throughput knee."
-set_parameter_property EXT_DOWN_PLD_DEPTH HDL_PARAMETER true
+set_parameter_property EXT_DOWN_PLD_DEPTH HDL_PARAMETER false
 set_parameter_property EXT_DOWN_PLD_DEPTH ALLOWED_RANGES {64 128 256 512 1024 2048}
 
 add_parameter INT_DOWN_PLD_DEPTH NATURAL 64
@@ -95,7 +95,7 @@ set_parameter_property INT_DOWN_PLD_DEPTH DISPLAY_NAME "Internal Download Payloa
 set_parameter_property INT_DOWN_PLD_DEPTH DESCRIPTION \
     "Linked-list payload RAM for internal CSR writes. CSR window is 32 words \
      max, so 64 is usually sufficient."
-set_parameter_property INT_DOWN_PLD_DEPTH HDL_PARAMETER true
+set_parameter_property INT_DOWN_PLD_DEPTH HDL_PARAMETER false
 set_parameter_property INT_DOWN_PLD_DEPTH ALLOWED_RANGES {32 64 128}
 
 add_parameter EXT_UP_PLD_DEPTH NATURAL 512
@@ -104,12 +104,12 @@ set_parameter_property EXT_UP_PLD_DEPTH DESCRIPTION \
     "Linked-list payload RAM for external upload (read data). Credit-based \
      reservation: effective outstanding for reads is min(OUTSTANDING_LIMIT, \
      EXT_UP_PLD_DEPTH / avg_burst_length). TLM CRED experiments characterize."
-set_parameter_property EXT_UP_PLD_DEPTH HDL_PARAMETER true
+set_parameter_property EXT_UP_PLD_DEPTH HDL_PARAMETER false
 set_parameter_property EXT_UP_PLD_DEPTH ALLOWED_RANGES {64 128 256 512 1024 2048}
 
 add_parameter INT_UP_PLD_DEPTH NATURAL 64
 set_parameter_property INT_UP_PLD_DEPTH DISPLAY_NAME "Internal Upload Payload Depth (words)"
-set_parameter_property INT_UP_PLD_DEPTH HDL_PARAMETER true
+set_parameter_property INT_UP_PLD_DEPTH HDL_PARAMETER false
 set_parameter_property INT_UP_PLD_DEPTH ALLOWED_RANGES {32 64 128}
 
 add_parameter INT_HDR_DEPTH NATURAL 4
@@ -117,7 +117,7 @@ set_parameter_property INT_HDR_DEPTH DISPLAY_NAME "Internal Header FIFO Depth"
 set_parameter_property INT_HDR_DEPTH DESCRIPTION \
     "Depth of int_down_hdr and int_up_hdr. TLM SIZE-03 shows 4 is \
      sufficient for typical workloads."
-set_parameter_property INT_HDR_DEPTH HDL_PARAMETER true
+set_parameter_property INT_HDR_DEPTH HDL_PARAMETER false
 set_parameter_property INT_HDR_DEPTH ALLOWED_RANGES {1 2 4 8}
 
 add_parameter MAX_BURST NATURAL 256
@@ -125,7 +125,7 @@ set_parameter_property MAX_BURST DISPLAY_NAME "Maximum Burst Length (words)"
 set_parameter_property MAX_BURST DESCRIPTION \
     "Maximum supported burst length. Mu3e SC protocol supports up to 256. \
      Reducing this saves area in burstcount and payload address logic."
-set_parameter_property MAX_BURST HDL_PARAMETER true
+set_parameter_property MAX_BURST HDL_PARAMETER false
 set_parameter_property MAX_BURST ALLOWED_RANGES {1 4 8 16 32 64 128 256}
 
 add_parameter BP_FIFO_DEPTH NATURAL 512
@@ -164,7 +164,7 @@ set_parameter_property ORD_NUM_DOMAINS DESCRIPTION \
     "Number of independent ordering domains. 16 = full 4-bit ORD_DOM_ID. \
      Reducing saves state array area (each domain is ~48 bits of state). \
      Only meaningful when ORD_ENABLE=true."
-set_parameter_property ORD_NUM_DOMAINS HDL_PARAMETER true
+set_parameter_property ORD_NUM_DOMAINS HDL_PARAMETER false
 set_parameter_property ORD_NUM_DOMAINS ALLOWED_RANGES {1 2 4 8 16}
 
 add_parameter ATOMIC_ENABLE BOOLEAN true
@@ -181,7 +181,7 @@ set_parameter_property S_AND_F_ENABLE DESCRIPTION \
     "When true, write packets are fully received and validated before \
      bus write is issued. When false, writes stream directly to bus \
      (lower latency but vulnerable to truncated packets)."
-set_parameter_property S_AND_F_ENABLE HDL_PARAMETER true
+set_parameter_property S_AND_F_ENABLE HDL_PARAMETER false
 
 add_parameter HUB_CAP_ENABLE BOOLEAN true
 set_parameter_property HUB_CAP_ENABLE DISPLAY_NAME "Enable HUB_CAP Capability Register"
@@ -246,7 +246,7 @@ set_parameter_property AXI4_USER_WIDTH DESCRIPTION \
     "Width of ARUSER/AWUSER sideband for ordering metadata. \
      Requires: order_type(2) + ord_dom_id(4) + ord_epoch(8) + \
      ord_scope(2) = 16 bits when ORD_ENABLE=true."
-set_parameter_property AXI4_USER_WIDTH HDL_PARAMETER true
+set_parameter_property AXI4_USER_WIDTH HDL_PARAMETER false
 set_parameter_property AXI4_USER_WIDTH ALLOWED_RANGES {0 1 2 4 8 16 32}
 
 add_parameter AXI4_ID_WIDTH NATURAL 4
@@ -255,7 +255,7 @@ set_parameter_property AXI4_ID_WIDTH DESCRIPTION \
     "Width of ARID/AWID/RID/BID. When OOO_ENABLE=false, all IDs are 0 \
      (single-ID in-order). When OOO_ENABLE=true, IDs differentiate \
      concurrent transactions for OoO completion."
-set_parameter_property AXI4_ID_WIDTH HDL_PARAMETER true
+set_parameter_property AXI4_ID_WIDTH HDL_PARAMETER false
 set_parameter_property AXI4_ID_WIDTH ALLOWED_RANGES {1 2 4 8}
 
 # ============================================================================

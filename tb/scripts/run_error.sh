@@ -4,23 +4,19 @@
 # ============================================================================
 set -euo pipefail
 
-cat <<'EOF'
-run_error.sh
-============
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-No implemented ERROR IDs are runnable in this snapshot.
+AVALON_ERROR_CASES=(
+  T500 T501 T502 T503 T509 T510 T511 T512 T513 T514 T515 T516
+  T517 T518 T519 T520 T521 T522 T523 T524 T525 T526 T527 T528
+  T529 T530 T531 T535 T536 T537 T538 T539 T540 T541 T542 T543
+  T544 T546 T547 T548 T549
+)
 
-Planned ERROR IDs from DV_PLAN: T500-T549.
+AXI4_ERROR_CASES=(
+  T504 T505 T506 T507 T508 T532 T533 T534 T535 T536 T537 T538
+  T539 T545
+)
 
-Blocked by incomplete failure-injection and recovery wiring:
-- Soft and hard bus-error propagation requires deterministic timeout/replay paths.
-- Atomic, OoO, and ordering fault-injection cases rely on explicit feature-gate
-  semantics in RTL headers and CSR handling.
-- reset-domain/clock-boundary fault cases (T548/T549) are compile-dimension
-  conditions and not covered in this snapshot harness.
-
-See tb/implementation-status.md for exact RTL handoff list.
-EOF
-
-echo ""
-echo "No ERROR runs were executed (blocked by RTL-handoff items below)."
+BUS_TYPE=AVALON "$SCRIPT_DIR/run_directed.sh" "${AVALON_ERROR_CASES[@]}"
+BUS_TYPE=AXI4   "$SCRIPT_DIR/run_directed.sh" "${AXI4_ERROR_CASES[@]}"

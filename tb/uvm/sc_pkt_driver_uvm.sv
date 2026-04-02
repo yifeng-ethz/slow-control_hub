@@ -20,14 +20,11 @@ class sc_pkt_driver_uvm extends uvm_driver #(sc_pkt_seq_item);
   endfunction
 
   task automatic drive_word(input logic [31:0] word, input logic [3:0] datak);
-    while (sc_pkt_vif.rst || !sc_pkt_vif.ready) begin
-      sc_pkt_vif.data  <= '0;
-      sc_pkt_vif.datak <= '0;
-      @(posedge sc_pkt_vif.clk);
-    end
     sc_pkt_vif.data  <= word;
     sc_pkt_vif.datak <= datak;
-    @(posedge sc_pkt_vif.clk);
+    do begin
+      @(posedge sc_pkt_vif.clk);
+    end while (sc_pkt_vif.rst || !sc_pkt_vif.ready);
   endtask
 
   task automatic drive_idle();
@@ -35,9 +32,34 @@ class sc_pkt_driver_uvm extends uvm_driver #(sc_pkt_seq_item);
     sc_pkt_vif.datak <= '0;
   endtask
 
+  function automatic bit item_has_atomic_payload(sc_pkt_seq_item item);
+    return (item.atomic && item.atomic_mode != SC_ATOMIC_DISABLED);
+  endfunction
+
   function automatic int unsigned payload_words_for_send(sc_pkt_seq_item item, sc_cmd_t cmd);
     int unsigned words_available;
     int unsigned target_words;
+
+    if (item_has_atomic_payload(item)) begin
+      if (!item.malformed) begin
+        return 2;
+      end
+
+      case (item.malformed_kind)
+        "missing_trailer": begin
+          return 2;
+        end
+        "data_count_mismatch", "truncated": begin
+          return 1;
+        end
+        "length_overflow", "fifo_overflow": begin
+          return 2;
+        end
+        default: begin
+          return 2;
+        end
+      endcase
+    end
 
     if (!item.is_write()) begin
       return 0;
@@ -76,10 +98,18 @@ class sc_pkt_driver_uvm extends uvm_driver #(sc_pkt_seq_item);
 
   task automatic drive_payload(sc_pkt_seq_item item, int unsigned payload_words);
     logic [3:0] data_datak;
+    logic [31:0] payload_word;
 
     for (int unsigned idx = 0; idx < payload_words && idx < MAX_CMD_WORDS; idx++) begin
       data_datak = (item.malformed && (item.malformed_kind == "bad_dtype") && (idx == 0)) ? 4'b1111 : 4'b0000;
-      if (idx < item.data_words_q.size()) begin
+      if (item_has_atomic_payload(item)) begin
+        case (idx)
+          0: payload_word = item.atomic_mask;
+          1: payload_word = item.atomic_data;
+          default: payload_word = 32'hCAFE_0000 + idx;
+        endcase
+        drive_word(payload_word, data_datak);
+      end else if (idx < item.data_words_q.size()) begin
         drive_word(item.data_words_q[idx], data_datak);
       end else begin
         drive_word({32'hBEEF_0000 + idx}, data_datak);
@@ -114,7 +144,7 @@ class sc_pkt_driver_uvm extends uvm_driver #(sc_pkt_seq_item);
     drive_word(make_addr_word(cmd), 4'b0000);
     drive_word(make_length_word(cmd), 4'b0000);
 
-    if (item.is_write()) begin
+    if (item.is_write() || item_has_atomic_payload(item)) begin
       drive_payload(item, payload_words);
     end
 

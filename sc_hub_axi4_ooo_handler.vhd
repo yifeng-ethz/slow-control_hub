@@ -16,6 +16,7 @@ use work.sc_hub_pkg.all;
 
 entity sc_hub_axi4_ooo_handler is
     generic(
+        OOO_CFG_ENABLE_G          : boolean := true;
         RD_TIMEOUT_CYCLES_G       : positive := DEFAULT_RD_TIMEOUT_CONST;
         WR_TIMEOUT_CYCLES_G       : positive := DEFAULT_WR_TIMEOUT_CONST;
         MAX_READ_OUTSTANDING_G    : positive := 4
@@ -29,6 +30,7 @@ entity sc_hub_axi4_ooo_handler is
         i_rd_cmd_address    : in  std_logic_vector(15 downto 0);
         i_rd_cmd_length     : in  std_logic_vector(15 downto 0);
         i_rd_cmd_tag        : in  std_logic_vector(3 downto 0);
+        i_rd_cmd_lock       : in  std_logic;
         o_rd_data_valid     : out std_logic;
         o_rd_data           : out std_logic_vector(31 downto 0);
         o_rd_data_tag       : out std_logic_vector(3 downto 0);
@@ -40,6 +42,7 @@ entity sc_hub_axi4_ooo_handler is
         o_wr_cmd_ready      : out std_logic;
         i_wr_cmd_address    : in  std_logic_vector(15 downto 0);
         i_wr_cmd_length     : in  std_logic_vector(15 downto 0);
+        i_wr_cmd_lock       : in  std_logic;
         i_wr_data_valid     : in  std_logic;
         i_wr_data           : in  std_logic_vector(31 downto 0);
         o_wr_data_ready     : out std_logic;
@@ -52,6 +55,7 @@ entity sc_hub_axi4_ooo_handler is
         m_axi_awlen         : out std_logic_vector(7 downto 0);
         m_axi_awsize        : out std_logic_vector(2 downto 0);
         m_axi_awburst       : out std_logic_vector(1 downto 0);
+        m_axi_awlock        : out std_logic;
         m_axi_awvalid       : out std_logic;
         m_axi_awready       : in  std_logic;
         m_axi_wdata         : out std_logic_vector(31 downto 0);
@@ -68,6 +72,7 @@ entity sc_hub_axi4_ooo_handler is
         m_axi_arlen         : out std_logic_vector(7 downto 0);
         m_axi_arsize        : out std_logic_vector(2 downto 0);
         m_axi_arburst       : out std_logic_vector(1 downto 0);
+        m_axi_arlock        : out std_logic;
         m_axi_arvalid       : out std_logic;
         m_axi_arready       : in  std_logic;
         m_axi_rid           : in  std_logic_vector(3 downto 0);
@@ -90,6 +95,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal ar_pending_address    : std_logic_vector(15 downto 0) := (others => '0');
     signal ar_pending_length     : unsigned(15 downto 0) := (others => '0');
     signal ar_pending_tag        : std_logic_vector(3 downto 0) := (others => '0');
+    signal ar_pending_lock       : std_logic := '0';
     signal rd_active             : std_logic_vector(0 to MAX_READ_OUTSTANDING_G - 1) := (others => '0');
     signal rd_beats_remaining    : beats_array_t(0 to MAX_READ_OUTSTANDING_G - 1) := (others => (others => '0'));
     signal rd_timeout_counter    : nat_array_t(0 to MAX_READ_OUTSTANDING_G - 1) := (others => 0);
@@ -110,6 +116,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal wr_done_pulse         : std_logic := '0';
     signal wr_response_reg       : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal wr_timeout_pulse      : std_logic := '0';
+    signal wr_lock_reg           : std_logic := '0';
 
     function axi_rsp_map_func (
         axi_rsp : std_logic_vector(1 downto 0)
@@ -147,6 +154,7 @@ begin
     m_axi_awlen   <= std_logic_vector(resize(wr_length_reg - 1, m_axi_awlen'length));
     m_axi_awsize  <= "010";
     m_axi_awburst <= "01";
+    m_axi_awlock  <= wr_lock_reg;
     m_axi_awvalid <= '1' when (wr_state = WR_SEND_AW) else '0';
 
     m_axi_wdata  <= i_wr_data;
@@ -155,11 +163,12 @@ begin
     m_axi_wvalid <= '1' when (wr_state = WR_STREAM_DATA and i_wr_data_valid = '1') else '0';
     m_axi_bready <= '1' when (wr_state = WR_WAIT_B) else '0';
 
-    m_axi_arid    <= ar_pending_tag;
+    m_axi_arid    <= ar_pending_tag when OOO_CFG_ENABLE_G else (others => '0');
     m_axi_araddr  <= ar_pending_address;
     m_axi_arlen   <= std_logic_vector(resize(ar_pending_length - 1, m_axi_arlen'length));
     m_axi_arsize  <= "010";
     m_axi_arburst <= "01";
+    m_axi_arlock  <= ar_pending_lock;
     m_axi_arvalid <= ar_pending_valid;
     m_axi_rready  <= '1';
 
@@ -207,6 +216,7 @@ begin
                 ar_pending_address  <= (others => '0');
                 ar_pending_length   <= (others => '0');
                 ar_pending_tag      <= (others => '0');
+                ar_pending_lock     <= '0';
                 rd_active           <= (others => '0');
                 rd_beats_remaining  <= (others => (others => '0'));
                 rd_timeout_counter  <= (others => 0);
@@ -226,6 +236,7 @@ begin
                 wr_done_pulse       <= '0';
                 wr_response_reg     <= SC_RSP_OK_CONST;
                 wr_timeout_pulse    <= '0';
+                wr_lock_reg         <= '0';
             else
                 rd_data_valid_pulse <= '0';
                 rd_done_pulse       <= '0';
@@ -240,9 +251,18 @@ begin
                     ar_pending_valid   <= '1';
                     ar_pending_address <= i_rd_cmd_address;
                     ar_pending_length  <= unsigned(i_rd_cmd_length);
-                    ar_pending_tag     <= i_rd_cmd_tag;
+                    ar_pending_lock    <= i_rd_cmd_lock;
+                    if (OOO_CFG_ENABLE_G) then
+                        ar_pending_tag <= i_rd_cmd_tag;
+                    else
+                        ar_pending_tag <= (others => '0');
+                    end if;
                 elsif (ar_pending_valid = '1' and m_axi_arready = '1') then
-                    rid_idx_v := to_integer(unsigned(ar_pending_tag));
+                    if (OOO_CFG_ENABLE_G) then
+                        rid_idx_v := to_integer(unsigned(ar_pending_tag));
+                    else
+                        rid_idx_v := 0;
+                    end if;
                     if (rid_idx_v < MAX_READ_OUTSTANDING_G) then
                         rd_active(rid_idx_v)          <= '1';
                         rd_beats_remaining(rid_idx_v) <= unsigned(ar_pending_length);
@@ -250,10 +270,15 @@ begin
                         rd_response_accum(rid_idx_v)  <= SC_RSP_OK_CONST;
                     end if;
                     ar_pending_valid <= '0';
+                    ar_pending_lock  <= '0';
                 end if;
 
                 if (m_axi_rvalid = '1') then
-                    rid_idx_v := to_integer(unsigned(m_axi_rid));
+                    if (OOO_CFG_ENABLE_G) then
+                        rid_idx_v := to_integer(unsigned(m_axi_rid));
+                    else
+                        rid_idx_v := 0;
+                    end if;
                     if (rid_idx_v < MAX_READ_OUTSTANDING_G and rd_active(rid_idx_v) = '1') then
                         beat_seen_v(rid_idx_v) := true;
                         rsp_v                  := axi_rsp_map_func(m_axi_rresp);
@@ -320,6 +345,7 @@ begin
                             wr_address_reg     <= i_wr_cmd_address;
                             wr_length_reg      <= unsigned(i_wr_cmd_length);
                             wr_response_reg    <= SC_RSP_OK_CONST;
+                            wr_lock_reg        <= i_wr_cmd_lock;
                             wr_state           <= WR_SEND_AW;
                         end if;
 
@@ -341,12 +367,14 @@ begin
                         if (m_axi_bvalid = '1') then
                             wr_response_reg <= axi_rsp_map_func(m_axi_bresp);
                             wr_done_pulse   <= '1';
+                            wr_lock_reg     <= '0';
                             wr_state        <= WR_IDLE;
                         elsif (wr_timeout_counter + 1 >= WR_TIMEOUT_CYCLES_G) then
                             wr_response_reg   <= SC_RSP_DECERR_CONST;
                             wr_done_pulse     <= '1';
                             wr_timeout_pulse  <= '1';
                             wr_timeout_counter <= 0;
+                            wr_lock_reg       <= '0';
                             wr_state          <= WR_IDLE;
                         else
                             wr_timeout_counter <= wr_timeout_counter + 1;

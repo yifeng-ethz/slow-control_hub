@@ -110,6 +110,7 @@ compile_uvm: compile_rtl
 		+incdir+$(UVM_DIR) \
 		$(UVM_HOME)/src/uvm_pkg.sv \
 		$(SIM_DIR)/sc_hub_pkg.sv \
+		$(SIM_DIR)/sc_hub_addr_map.sv \
 		$(SIM_DIR)/sc_hub_ref_model.sv \
 		$(SIM_DIR)/avmm_slave_bfm.sv \
 		$(SIM_DIR)/axi4_slave_bfm.sv \

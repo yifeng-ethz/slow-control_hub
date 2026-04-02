@@ -198,6 +198,8 @@ add_fileset_file sc_hub_pkt_tx.vhd VHDL PATH sc_hub_pkt_tx.vhd
 add_fileset_file sc_hub_core.vhd VHDL PATH sc_hub_core.vhd
 add_fileset_file sc_hub_avmm_handler.vhd VHDL PATH sc_hub_avmm_handler.vhd
 add_fileset_file sc_hub_axi4_handler.vhd VHDL PATH sc_hub_axi4_handler.vhd
+add_fileset_file sc_hub_axi4_core.vhd VHDL PATH sc_hub_axi4_core.vhd
+add_fileset_file sc_hub_axi4_ooo_handler.vhd VHDL PATH sc_hub_axi4_ooo_handler.vhd
 add_fileset_file sc_hub_top.vhd VHDL PATH sc_hub_top.vhd TOP_LEVEL_FILE
 add_fileset_file sc_hub_top_axi4.vhd VHDL PATH sc_hub_top_axi4.vhd
 

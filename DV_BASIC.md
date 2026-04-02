@@ -89,7 +89,7 @@ Verifies the internal CSR register map (0xFE80-0xFE9F). CSR transactions never r
 | T055 | D | AVMM | LAST_RD_ADDR/DATA | 1 | read from 0x1234 -> read LAST_RD_ADDR, LAST_RD_DATA | addr=0x1234, data=last read word | -- |
 | T056 | D | AVMM | LAST_WR_ADDR/DATA | 1 | write 0xCAFEBABE to 0x5678 -> read LAST_WR_ADDR, LAST_WR_DATA | match | -- |
 | T057 | D | AVMM | PKT_DROP_CNT after drops | 1 | 3 malformed packets -> read PKT_DROP_CNT | = 3 | -- |
-| T058 | D | AVMM | Invalid CSR offset (0xFE80+0x018) | 1 | read beyond defined window | returns 0xEEEEEEEE, response=SLAVEERROR | -- |
+| T058 | D | AVMM | Invalid CSR offset (0xFE80+0x01B) | 1 | read unmapped CSR slot inside the hub CSR window | returns 0xEEEEEEEE, response=SLAVEERROR | -- |
 | T059 | D | AVMM | Burst write to CSR -> reject | 1 | burst write L=2 to CSR address | SLAVEERROR response | -- |
 | T060 | D | AXI4 | CSR read on AXI4 config | 1 | read CSR ID via AXI4 | same result as T043 (CSR bypasses bus handler) | -- |
 

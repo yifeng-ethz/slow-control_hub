@@ -1,9 +1,11 @@
 -- File name: sc_hub_pkt_rx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.9
--- Date    : 20260331
--- Change  : Split external packet-start admission from core dequeue admission so backpressure can block new packets without blocking queued-core handoff.
+-- Version : 26.2.18
+-- Date    : 20260402
+-- Change  : Store the internal-vs-external classification beside queued
+--           packets so the core accept path uses a one-bit sideband instead
+--           of re-decoding the packet address in the same cycle.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -16,6 +18,7 @@ use work.sc_hub_pkg.all;
 entity sc_hub_pkt_rx is
     generic(
         MAX_BURST_G        : positive := MAX_BURST_WORDS_CONST;
+        EXT_PLD_DEPTH_G    : positive := DEFAULT_DL_FIFO_DEPTH_CONST;
         PKT_TIMEOUT_CYCLES : positive := DEFAULT_PKT_TIMEOUT_CONST;
         PKT_QUEUE_DEPTH_G  : positive := 16
     );
@@ -31,12 +34,14 @@ entity sc_hub_pkt_rx is
         o_pkt_in_progress    : out std_logic;
         o_pkt_valid          : out std_logic;
         o_pkt_info           : out sc_pkt_info_t;
+        o_pkt_is_internal    : out std_logic;
+        o_soft_reset_pulse   : out std_logic;
         i_wr_data_rdreq      : in  std_logic;
         o_wr_data_q          : out std_logic_vector(31 downto 0);
         o_wr_data_empty      : out std_logic;
         o_pkt_drop_count     : out std_logic_vector(15 downto 0);
         o_pkt_drop_pulse     : out std_logic;
-        o_fifo_usedw         : out std_logic_vector(8 downto 0);
+        o_fifo_usedw         : out std_logic_vector(9 downto 0);
         o_fifo_full          : out std_logic;
         o_fifo_overflow      : out std_logic;
         o_fifo_overflow_pulse: out std_logic
@@ -44,9 +49,19 @@ entity sc_hub_pkt_rx is
 end entity sc_hub_pkt_rx;
 
 architecture rtl of sc_hub_pkt_rx is
-    type rx_state_t is (IDLING, ADDRING, LENGTHING, WRITING_DATA, WAITING_TRAILER);
+    type rx_state_t is (
+        IDLING,
+        ADDRING,
+        LENGTHING,
+        ATOMIC_MASKING,
+        ATOMIC_DATAING,
+        WAITING_WRITE_SPACE,
+        WRITING_DATA,
+        WAITING_TRAILER
+    );
     subtype pkt_queue_index_t is natural range 0 to PKT_QUEUE_DEPTH_G - 1;
     type pkt_queue_mem_t is array (pkt_queue_index_t) of sc_pkt_info_t;
+    type pkt_queue_flag_mem_t is array (pkt_queue_index_t) of std_logic;
 
     signal rx_state              : rx_state_t := IDLING;
     signal pkt_info_work         : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
@@ -62,14 +77,26 @@ architecture rtl of sc_hub_pkt_rx is
     signal fifo_q                : std_logic_vector(31 downto 0);
     signal fifo_empty            : std_logic;
     signal fifo_full_int         : std_logic;
-    signal fifo_usedw_int        : std_logic_vector(8 downto 0);
+    signal fifo_usedw_raw        : std_logic_vector(ceil_log2_func(EXT_PLD_DEPTH_G + 1) - 1 downto 0);
     signal fifo_overflow_int     : std_logic;
     signal write_words_seen      : unsigned(15 downto 0) := (others => '0');
     signal idle_cycles           : natural range 0 to PKT_TIMEOUT_CYCLES := 0;
+    signal first_write_word      : std_logic_vector(31 downto 0) := (others => '0');
+    signal soft_reset_pulse      : std_logic := '0';
     signal pkt_queue_mem         : pkt_queue_mem_t := (others => SC_PKT_INFO_RESET_CONST);
+    signal pkt_queue_is_internal : pkt_queue_flag_mem_t := (others => '0');
     signal pkt_queue_rd_ptr      : pkt_queue_index_t := 0;
     signal pkt_queue_wr_ptr      : pkt_queue_index_t := 0;
     signal pkt_queue_count       : natural range 0 to PKT_QUEUE_DEPTH_G := 0;
+    signal int_pkt_valid         : std_logic := '0';
+    signal int_pkt_info          : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal int_pkt_is_internal   : std_logic := '0';
+    signal trailer_wait_committed: std_logic := '0';
+    signal wait_space_granted    : std_logic := '0';
+    signal debug_enqueue_count   : unsigned(31 downto 0) := (others => '0');
+    signal debug_restart_count   : unsigned(31 downto 0) := (others => '0');
+    signal debug_ignored_preamble_count : unsigned(31 downto 0) := (others => '0');
+    signal payload_space_ready   : std_logic;
 
     function is_sc_preamble_func (
         data_in  : std_logic_vector(31 downto 0);
@@ -103,6 +130,20 @@ architecture rtl of sc_hub_pkt_rx is
         return (data_in = x"00000000" and datak_in = "0000");
     end function is_idle_func;
 
+    function pkt_is_internal_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean is
+        variable addr_v : natural;
+    begin
+        for idx in 15 downto 0 loop
+            if (pkt_info.start_address(idx) /= '0' and pkt_info.start_address(idx) /= '1') then
+                return false;
+            end if;
+        end loop;
+        addr_v := to_integer(unsigned(pkt_info.start_address(15 downto 0)));
+        return (addr_v >= HUB_CSR_BASE_ADDR_CONST and addr_v < HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WINDOW_WORDS_CONST);
+    end function pkt_is_internal_func;
+
     function next_pkt_queue_index_func (
         value_in : pkt_queue_index_t
     ) return pkt_queue_index_t is
@@ -113,11 +154,12 @@ architecture rtl of sc_hub_pkt_rx is
             return value_in + 1;
         end if;
     end function next_pkt_queue_index_func;
+
 begin
     fifo_inst : entity work.sc_hub_fifo_sf
     generic map(
         WIDTH_G => 32,
-        DEPTH_G => MAX_BURST_G
+        DEPTH_G => EXT_PLD_DEPTH_G
     )
     port map(
         csi_clk       => i_clk,
@@ -132,24 +174,40 @@ begin
         read_data     => fifo_q,
         empty         => fifo_empty,
         full          => fifo_full_int,
-        usedw         => fifo_usedw_int,
+        usedw         => fifo_usedw_raw,
         overflow      => fifo_overflow_int
     );
 
     o_wr_data_q           <= fifo_q;
     o_wr_data_empty       <= fifo_empty;
     o_pkt_in_progress     <= '1' when (rx_state /= IDLING) else '0';
-    o_pkt_valid           <= '1' when (pkt_queue_count /= 0) else '0';
-    o_pkt_info            <= pkt_queue_mem(pkt_queue_rd_ptr) when (pkt_queue_count /= 0) else SC_PKT_INFO_RESET_CONST;
+    o_pkt_valid           <= '1' when (int_pkt_valid = '1' or pkt_queue_count /= 0) else '0';
+    o_pkt_info            <= int_pkt_info when (int_pkt_valid = '1') else
+                             pkt_queue_mem(pkt_queue_rd_ptr) when (pkt_queue_count /= 0) else
+                             SC_PKT_INFO_RESET_CONST;
+    o_pkt_is_internal     <= int_pkt_is_internal when (int_pkt_valid = '1') else
+                             pkt_queue_is_internal(pkt_queue_rd_ptr) when (pkt_queue_count /= 0) else
+                             '0';
+    o_soft_reset_pulse    <= soft_reset_pulse;
     o_pkt_drop_count      <= std_logic_vector(pkt_drop_count);
     o_pkt_drop_pulse      <= pkt_drop_pulse;
-    o_fifo_usedw          <= fifo_usedw_int;
+    o_fifo_usedw          <= std_logic_vector(resize(unsigned(fifo_usedw_raw), o_fifo_usedw'length));
     o_fifo_full           <= fifo_full_int;
     o_fifo_overflow       <= fifo_overflow_sticky;
     o_fifo_overflow_pulse <= fifo_overflow_pulse;
 
+    payload_space_ready <= '1'
+        when (
+            rx_state /= WAITING_WRITE_SPACE or
+            wait_space_granted = '1'
+        )
+        else '0';
+
     o_download_ready <= '1'
-        when (rx_state /= IDLING) or (pkt_queue_count < PKT_QUEUE_DEPTH_G)
+        when (
+            (rx_state = IDLING and pkt_queue_count < PKT_QUEUE_DEPTH_G) or
+            (rx_state /= IDLING and payload_space_ready = '1')
+        )
         else '0';
 
     packet_receiver : process(i_clk)
@@ -157,14 +215,19 @@ begin
         variable is_preamble_v  : boolean;
         variable is_trailer_v   : boolean;
         variable is_idle_v      : boolean;
-        variable is_read_pkt_v  : boolean;
-        variable drop_packet_v  : boolean;
-        variable commit_packet_v: boolean;
-        variable enqueue_queue_v : boolean;
+        variable has_download_words_v : boolean;
+        variable drop_packet_v       : boolean;
+        variable commit_packet_v     : boolean;
+        variable enqueue_queue_v     : boolean;
         variable enqueue_pkt_info_v : sc_pkt_info_t;
         variable queue_rd_ptr_v   : pkt_queue_index_t;
         variable queue_wr_ptr_v   : pkt_queue_index_t;
-        variable queue_count_v    : natural range 0 to PKT_QUEUE_DEPTH_G;
+        variable queue_count_v            : natural range 0 to PKT_QUEUE_DEPTH_G;
+        variable int_pkt_valid_v          : std_logic;
+        variable int_pkt_info_v           : sc_pkt_info_t;
+        variable int_pkt_is_internal_v    : std_logic;
+        variable trailer_wait_committed_v : std_logic;
+        variable pkt_info_complete_v      : sc_pkt_info_t;
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1' or i_soft_reset = '1') then
@@ -181,10 +244,21 @@ begin
                 fifo_rollback        <= '0';
                 write_words_seen     <= (others => '0');
                 idle_cycles          <= 0;
+                first_write_word     <= (others => '0');
+                soft_reset_pulse     <= '0';
                 pkt_queue_mem        <= (others => SC_PKT_INFO_RESET_CONST);
+                pkt_queue_is_internal <= (others => '0');
                 pkt_queue_rd_ptr     <= 0;
                 pkt_queue_wr_ptr     <= 0;
                 pkt_queue_count      <= 0;
+                int_pkt_valid        <= '0';
+                int_pkt_info         <= SC_PKT_INFO_RESET_CONST;
+                int_pkt_is_internal  <= '0';
+                debug_enqueue_count        <= (others => '0');
+                debug_restart_count        <= (others => '0');
+                debug_ignored_preamble_count <= (others => '0');
+                trailer_wait_committed     <= '0';
+                wait_space_granted         <= '0';
             else
                 pkt_drop_pulse      <= '0';
                 fifo_overflow_pulse <= '0';
@@ -193,32 +267,46 @@ begin
                 fifo_write_data     <= (others => '0');
                 fifo_commit         <= '0';
                 fifo_rollback       <= '0';
+                soft_reset_pulse    <= '0';
                 enqueue_queue_v     := false;
                 enqueue_pkt_info_v  := SC_PKT_INFO_RESET_CONST;
                 queue_rd_ptr_v      := pkt_queue_rd_ptr;
                 queue_wr_ptr_v      := pkt_queue_wr_ptr;
                 queue_count_v       := pkt_queue_count;
-
-                if (pkt_queue_count /= 0 and i_allow_new_pkt = '1') then
+                int_pkt_valid_v          := int_pkt_valid;
+                int_pkt_info_v           := int_pkt_info;
+                int_pkt_is_internal_v    := int_pkt_is_internal;
+                trailer_wait_committed_v := trailer_wait_committed;
+                if (rx_state /= WAITING_WRITE_SPACE) then
+                    wait_space_granted <= '0';
+                end if;
+                if (int_pkt_valid = '1' and i_allow_new_pkt = '1') then
+                    int_pkt_valid_v       := '0';
+                    int_pkt_info_v        := SC_PKT_INFO_RESET_CONST;
+                    int_pkt_is_internal_v := '0';
+                elsif (pkt_queue_count /= 0 and i_allow_new_pkt = '1') then
                     queue_rd_ptr_v := next_pkt_queue_index_func(queue_rd_ptr_v);
                     queue_count_v  := queue_count_v - 1;
                 end if;
 
-                is_skip_v       := is_skip_func(i_download_data, i_download_datak);
-                is_preamble_v   := is_sc_preamble_func(i_download_data, i_download_datak);
-                is_trailer_v    := is_trailer_func(i_download_data, i_download_datak);
-                is_idle_v       := is_idle_func(i_download_data, i_download_datak);
-                is_read_pkt_v   := pkt_is_read_func(pkt_info_work);
-                drop_packet_v   := false;
-                commit_packet_v := false;
+                is_skip_v            := is_skip_func(i_download_data, i_download_datak);
+                is_preamble_v        := is_sc_preamble_func(i_download_data, i_download_datak);
+                is_trailer_v         := is_trailer_func(i_download_data, i_download_datak);
+                is_idle_v            := is_idle_func(i_download_data, i_download_datak);
+                has_download_words_v := pkt_has_download_words_func(pkt_info_work);
+                drop_packet_v        := false;
+                commit_packet_v      := false;
 
                 if (fifo_overflow_int = '1') then
                     fifo_overflow_sticky <= '1';
                     fifo_overflow_pulse  <= '1';
                 end if;
 
-                if (rx_state /= IDLING) then
-                    if (is_skip_v = true or is_idle_v = true) then
+                if (rx_state /= IDLING and rx_state /= WAITING_WRITE_SPACE) then
+                    if (
+                        is_skip_v = true or
+                        (is_idle_v = true and rx_state /= WRITING_DATA)
+                    ) then
                         if (idle_cycles < PKT_TIMEOUT_CYCLES) then
                             idle_cycles <= idle_cycles + 1;
                         end if;
@@ -234,7 +322,8 @@ begin
                 end if;
 
                 if (rx_state /= IDLING and is_preamble_v = true and i_accept_new_pkt = '1') then
-                    if (pkt_is_read_func(pkt_info_work) = false) then
+                    debug_restart_count <= sat_inc32_func(debug_restart_count);
+                    if (pkt_has_download_words_func(pkt_info_work)) then
                         fifo_rollback  <= '1';
                         pkt_drop_pulse <= '1';
                         pkt_drop_count <= sat_inc16_func(pkt_drop_count);
@@ -247,15 +336,22 @@ begin
                     pkt_info_work.mask_t         <= '0';
                     pkt_info_work.mask_r         <= '0';
                     pkt_info_work.rw_length      <= (others => '0');
+                    pkt_info_work.order_mode     <= SC_ORDER_RELAXED_CONST;
+                    pkt_info_work.order_domain   <= (others => '0');
+                    pkt_info_work.order_epoch    <= (others => '0');
+                    pkt_info_work.order_scope    <= (others => '0');
+                    pkt_info_work.atomic_flag    <= '0';
+                    pkt_info_work.atomic_mask    <= (others => '0');
+                    pkt_info_work.atomic_data    <= (others => '0');
                     fifo_capture_start           <= '1';
                     write_words_seen            <= (others => '0');
                     idle_cycles                 <= 0;
+                    trailer_wait_committed_v    := '0';
                     rx_state                    <= ADDRING;
                 else
                     case rx_state is
                         when IDLING =>
-                            write_words_seen <= (others => '0');
-                            if (i_accept_new_pkt = '1' and pkt_queue_count < PKT_QUEUE_DEPTH_G and is_preamble_v = true) then
+                            if (pkt_queue_count < PKT_QUEUE_DEPTH_G and is_preamble_v = true) then
                                 pkt_info_work.sc_type       <= i_download_data(25 downto 24);
                                 pkt_info_work.fpga_id       <= i_download_data(23 downto 8);
                                 pkt_info_work.start_address <= (others => '0');
@@ -264,8 +360,18 @@ begin
                                 pkt_info_work.mask_t        <= '0';
                                 pkt_info_work.mask_r        <= '0';
                                 pkt_info_work.rw_length     <= (others => '0');
+                                pkt_info_work.order_mode    <= SC_ORDER_RELAXED_CONST;
+                                pkt_info_work.order_domain  <= (others => '0');
+                                pkt_info_work.order_epoch   <= (others => '0');
+                                pkt_info_work.order_scope   <= (others => '0');
+                                pkt_info_work.atomic_flag   <= '0';
+                                pkt_info_work.atomic_mask   <= (others => '0');
+                                pkt_info_work.atomic_data   <= (others => '0');
                                 fifo_capture_start          <= '1';
+                                trailer_wait_committed_v    := '0';
                                 rx_state                    <= ADDRING;
+                            elsif (is_preamble_v = true) then
+                                debug_ignored_preamble_count <= sat_inc32_func(debug_ignored_preamble_count);
                             end if;
 
                         when ADDRING =>
@@ -276,7 +382,13 @@ begin
                                 if (is_trailer_v = true or is_preamble_v = true) then
                                     drop_packet_v := true;
                                 else
+                                    if (i_download_data(31 downto 30) = SC_ORDER_RESERVED_CONST) then
+                                        pkt_info_work.order_mode <= SC_ORDER_RELAXED_CONST;
+                                    else
+                                        pkt_info_work.order_mode <= i_download_data(31 downto 30);
+                                    end if;
                                     pkt_info_work.start_address <= i_download_data(23 downto 0);
+                                    pkt_info_work.atomic_flag   <= i_download_data(28);
                                     pkt_info_work.mask_m        <= i_download_data(27);
                                     pkt_info_work.mask_s        <= i_download_data(26);
                                     pkt_info_work.mask_t        <= i_download_data(25);
@@ -290,23 +402,95 @@ begin
                                 fifo_rollback <= '1';
                                 rx_state      <= IDLING;
                             elsif (is_skip_v = false) then
-                                pkt_info_work.rw_length <= i_download_data(15 downto 0);
+                                pkt_info_complete_v              := pkt_info_work;
+                                pkt_info_complete_v.rw_length    := i_download_data(15 downto 0);
+                                pkt_info_complete_v.order_domain := i_download_data(31 downto 28);
+                                pkt_info_complete_v.order_epoch  := i_download_data(27 downto 20);
+                                pkt_info_work.rw_length    <= i_download_data(15 downto 0);
+                                pkt_info_work.order_domain <= i_download_data(31 downto 28);
+                                pkt_info_work.order_epoch  <= i_download_data(27 downto 20);
+                                if (i_download_data(19 downto 18) = "11") then
+                                    pkt_info_complete_v.order_scope := "00";
+                                    pkt_info_work.order_scope <= "00";
+                                else
+                                    pkt_info_complete_v.order_scope := i_download_data(19 downto 18);
+                                    pkt_info_work.order_scope <= i_download_data(19 downto 18);
+                                end if;
                                 if (unsigned(i_download_data(15 downto 0)) > MAX_BURST_G) then
                                     drop_packet_v := true;
-                                elsif (is_read_pkt_v = true) then
+                                elsif (pkt_info_work.atomic_flag = '1') then
+                                    rx_state <= ATOMIC_MASKING;
+                                elsif (has_download_words_v = false) then
                                     if (queue_count_v < PKT_QUEUE_DEPTH_G) then
-                                        enqueue_pkt_info_v           := pkt_info_work;
-                                        enqueue_pkt_info_v.rw_length := i_download_data(15 downto 0);
+                                        enqueue_pkt_info_v           := pkt_info_complete_v;
                                         enqueue_queue_v              := true;
+                                        trailer_wait_committed_v     := '1';
                                         rx_state                     <= WAITING_TRAILER;
                                     else
                                         drop_packet_v := true;
                                     end if;
                                 elsif (unsigned(i_download_data(15 downto 0)) = 0) then
                                     rx_state <= WAITING_TRAILER;
+                                elsif (to_integer(unsigned(fifo_usedw_raw)) + to_integer(unsigned(i_download_data(15 downto 0))) > EXT_PLD_DEPTH_G) then
+                                    wait_space_granted <= '0';
+                                    rx_state <= WAITING_WRITE_SPACE;
                                 else
                                     write_words_seen <= (others => '0');
                                     rx_state         <= WRITING_DATA;
+                                end if;
+                            end if;
+
+                        when WAITING_WRITE_SPACE =>
+                            if (drop_packet_v = true) then
+                                fifo_rollback <= '1';
+                                rx_state      <= IDLING;
+                            elsif (wait_space_granted = '0') then
+                                if (to_integer(unsigned(fifo_usedw_raw)) + to_integer(unsigned(pkt_info_work.rw_length)) <= EXT_PLD_DEPTH_G) then
+                                    wait_space_granted <= '1';
+                                end if;
+                            else
+                                if (is_skip_v = true) then
+                                    null;
+                                elsif (is_trailer_v = true or is_preamble_v = true) then
+                                    drop_packet_v := true;
+                                else
+                                    fifo_write_en   <= '1';
+                                    fifo_write_data <= i_download_data;
+                                    first_write_word <= i_download_data;
+
+                                    if (unsigned(pkt_info_work.rw_length) = 1) then
+                                        rx_state <= WAITING_TRAILER;
+                                    else
+                                        rx_state <= WRITING_DATA;
+                                    end if;
+
+                                    write_words_seen <= to_unsigned(1, write_words_seen'length);
+                                end if;
+                            end if;
+
+                        when ATOMIC_MASKING =>
+                            if (drop_packet_v = true) then
+                                fifo_rollback <= '1';
+                                rx_state      <= IDLING;
+                            elsif (is_skip_v = false) then
+                                if (is_trailer_v = true or is_preamble_v = true) then
+                                    drop_packet_v := true;
+                                else
+                                    pkt_info_work.atomic_mask <= i_download_data;
+                                    rx_state                 <= ATOMIC_DATAING;
+                                end if;
+                            end if;
+
+                        when ATOMIC_DATAING =>
+                            if (drop_packet_v = true) then
+                                fifo_rollback <= '1';
+                                rx_state      <= IDLING;
+                            elsif (is_skip_v = false) then
+                                if (is_trailer_v = true or is_preamble_v = true) then
+                                    drop_packet_v := true;
+                                else
+                                    pkt_info_work.atomic_data <= i_download_data;
+                                    rx_state                 <= WAITING_TRAILER;
                                 end if;
                             end if;
 
@@ -314,12 +498,17 @@ begin
                             if (drop_packet_v = true) then
                                 fifo_rollback <= '1';
                                 rx_state      <= IDLING;
-                            elsif (is_skip_v = false) then
+                            elsif (is_skip_v = true) then
+                                null;
+                            else
                                 if (is_trailer_v = true) then
                                     drop_packet_v := true;
                                 elsif (write_words_seen < unsigned(pkt_info_work.rw_length)) then
                                     fifo_write_en   <= '1';
                                     fifo_write_data <= i_download_data;
+                                    if (write_words_seen = 0) then
+                                        first_write_word <= i_download_data;
+                                    end if;
                                     if (fifo_full_int = '1') then
                                         drop_packet_v := true;
                                     end if;
@@ -353,11 +542,48 @@ begin
                         fifo_rollback  <= '1';
                         pkt_drop_pulse <= '1';
                         pkt_drop_count <= sat_inc16_func(pkt_drop_count);
-                        rx_state       <= IDLING;
-                        write_words_seen <= (others => '0');
+                        rx_state         <= IDLING;
+                        trailer_wait_committed_v := '0';
                     elsif (commit_packet_v = true) then
-                        if (pkt_is_read_func(pkt_info_work)) then
-                            fifo_commit <= '1';
+                        if (trailer_wait_committed_v = '1') then
+                            rx_state                 <= IDLING;
+                            write_words_seen         <= (others => '0');
+                            trailer_wait_committed_v := '0';
+                        elsif (
+                            pkt_has_download_words_func(pkt_info_work) = true and
+                            pkt_is_read_func(pkt_info_work) = false and
+                            pkt_info_work.atomic_flag = '0' and
+                            unsigned(pkt_info_work.rw_length) = 1 and
+                            to_integer(unsigned(pkt_info_work.start_address(15 downto 0))) = HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WO_CTRL_CONST and
+                            first_write_word(2) = '1'
+                        ) then
+                            fifo_rollback    <= '1';
+                            soft_reset_pulse <= '1';
+                        elsif (pkt_has_download_words_func(pkt_info_work) = false) then
+                            if (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                                fifo_commit        <= '1';
+                                enqueue_pkt_info_v := pkt_info_work;
+                                enqueue_queue_v    := true;
+                            else
+                                pkt_drop_pulse <= '1';
+                                pkt_drop_count <= sat_inc16_func(pkt_drop_count);
+                            end if;
+                        elsif (
+                            pkt_is_internal_func(pkt_info_work) = true and
+                            pkt_is_read_func(pkt_info_work) = false and
+                            pkt_info_work.atomic_flag = '0' and
+                            unsigned(pkt_info_work.rw_length) = 1
+                        ) then
+                            if (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                                fifo_rollback                <= '1';
+                                enqueue_pkt_info_v           := pkt_info_work;
+                                enqueue_pkt_info_v.atomic_data := first_write_word;
+                                enqueue_queue_v              := true;
+                            else
+                                fifo_rollback  <= '1';
+                                pkt_drop_pulse <= '1';
+                                pkt_drop_count <= sat_inc16_func(pkt_drop_count);
+                            end if;
                         elsif (queue_count_v < PKT_QUEUE_DEPTH_G) then
                             fifo_commit        <= '1';
                             enqueue_pkt_info_v := pkt_info_work;
@@ -368,19 +594,35 @@ begin
                             pkt_drop_count <= sat_inc16_func(pkt_drop_count);
                         end if;
                         rx_state         <= IDLING;
-                        write_words_seen <= (others => '0');
                     end if;
 
                     if (enqueue_queue_v = true) then
-                        pkt_queue_mem(queue_wr_ptr_v) <= enqueue_pkt_info_v;
-                        queue_wr_ptr_v                := next_pkt_queue_index_func(queue_wr_ptr_v);
-                        queue_count_v                 := queue_count_v + 1;
+                        debug_enqueue_count <= sat_inc32_func(debug_enqueue_count);
+                        if (pkt_is_internal_func(enqueue_pkt_info_v) = true and int_pkt_valid_v = '0') then
+                            int_pkt_info_v        := enqueue_pkt_info_v;
+                            int_pkt_is_internal_v := '1';
+                            int_pkt_valid_v       := '1';
+                        else
+                            pkt_queue_mem(queue_wr_ptr_v)         <= enqueue_pkt_info_v;
+                            if (pkt_is_internal_func(enqueue_pkt_info_v) = true) then
+                                pkt_queue_is_internal(queue_wr_ptr_v) <= '1';
+                            else
+                                pkt_queue_is_internal(queue_wr_ptr_v) <= '0';
+                            end if;
+                            queue_wr_ptr_v                        := next_pkt_queue_index_func(queue_wr_ptr_v);
+                            queue_count_v                         := queue_count_v + 1;
+                        end if;
                     end if;
 
-                    pkt_queue_rd_ptr <= queue_rd_ptr_v;
-                    pkt_queue_wr_ptr <= queue_wr_ptr_v;
-                    pkt_queue_count  <= queue_count_v;
                 end if;
+
+                pkt_queue_rd_ptr <= queue_rd_ptr_v;
+                pkt_queue_wr_ptr <= queue_wr_ptr_v;
+                pkt_queue_count  <= queue_count_v;
+                int_pkt_valid    <= int_pkt_valid_v;
+                int_pkt_info     <= int_pkt_info_v;
+                int_pkt_is_internal <= int_pkt_is_internal_v;
+                trailer_wait_committed <= trailer_wait_committed_v;
             end if;
         end if;
     end process packet_receiver;

@@ -46,13 +46,18 @@ module sc_pkt_monitor (
           next_reply.fpga_id = aso_data[23:8];
         end
         1: begin
+          next_reply.order_mode    = sc_order_mode_e'((aso_data[31:30] == SC_ORDER_INVALID) ? SC_ORDER_RELAXED : aso_data[31:30]);
+          next_reply.atomic        = aso_data[28];
           next_reply.start_address = aso_data[23:0];
         end
         2: begin
           next_reply.header_word   = aso_data[31:0];
+          next_reply.order_domain  = aso_data[31:28];
+          next_reply.order_epoch   = aso_data[27:20];
+          next_reply.order_scope   = (aso_data[19:18] == 2'b11) ? 2'b00 : aso_data[19:18];
           next_reply.echoed_length = aso_data[15:0];
-          next_reply.header_valid  = aso_data[16];
-          next_reply.response      = aso_data[29:28];
+          next_reply.header_valid  = 1'b1;
+          next_reply.response      = aso_data[17:16];
         end
         default: begin
           if (next_word_index > 2 && !aso_eop && next_reply.payload_words < 256) begin
@@ -96,6 +101,26 @@ module sc_pkt_monitor (
         return;
       end
       @(posedge clk);
+    end
+    reply = reply_queue.pop_front();
+  endtask
+
+  task automatic wait_reply_cycles(
+    output sc_reply_t   reply,
+    input  int unsigned timeout_cycles
+  );
+    int unsigned waited_cycles;
+
+    waited_cycles = 0;
+    while (reply_queue.size() == 0) begin
+      if (waited_cycles >= timeout_cycles) begin
+        reply = make_empty_reply();
+        reply.echoed_length = 16'hffff;
+        $error("sc_pkt_monitor: timeout waiting for reply after %0d cycles", timeout_cycles);
+        return;
+      end
+      @(posedge clk);
+      waited_cycles++;
     end
     reply = reply_queue.pop_front();
   endtask

@@ -15,7 +15,8 @@ use work.sc_hub_pkg.all;
 
 entity sc_hub_avmm_handler is
     generic(
-        RD_TIMEOUT_CYCLES_G : positive := DEFAULT_RD_TIMEOUT_CONST
+        RD_TIMEOUT_CYCLES_G : positive := DEFAULT_RD_TIMEOUT_CONST;
+        WR_TIMEOUT_CYCLES_G : positive := DEFAULT_WR_TIMEOUT_CONST
     );
     port(
         i_clk               : in  std_logic;
@@ -55,7 +56,7 @@ architecture rtl of sc_hub_avmm_handler is
     signal cmd_address_reg     : std_logic_vector(15 downto 0) := (others => '0');
     signal cmd_length_reg      : unsigned(15 downto 0) := (others => '0');
     signal words_seen          : unsigned(15 downto 0) := (others => '0');
-    signal timeout_counter     : natural range 0 to RD_TIMEOUT_CYCLES_G := 0;
+    signal timeout_counter     : natural := 0;
     signal response_reg        : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal rd_data_valid_pulse : std_logic := '0';
     signal rd_data_reg         : std_logic_vector(31 downto 0) := (others => '0');
@@ -172,9 +173,10 @@ begin
                             response_reg <= avm_hub_response;
                             done_pulse   <= '1';
                             avmm_state   <= IDLING;
-                        elsif (timeout_counter + 1 >= RD_TIMEOUT_CYCLES_G) then
+                        elsif (timeout_counter + 1 >= WR_TIMEOUT_CYCLES_G) then
                             response_reg    <= SC_RSP_DECERR_CONST;
                             done_pulse      <= '1';
+                            timeout_pulse   <= '1';
                             timeout_counter <= 0;
                             avmm_state      <= IDLING;
                         else

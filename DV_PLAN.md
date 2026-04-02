@@ -4,8 +4,8 @@
 **Author:** Yifeng Wang
 **Companion:** RTL_PLAN.md, TLM_PLAN.md, TLM_NOTE.md
 **System DV Plan:** `/home/yifeng/packages/online_dpv2/online/fe_board/fe_scifi/tb/scifi_dp/doc/DV_PLAN.md`
-**Simulator:** Questa FSE 2022.4 (no `rand`, no `covergroup`, no DPI)
-**UVM:** UVM 1.2 bundled with Questa FSE, compiled with `+define+UVM_NO_DPI`
+**Simulator:** Questa FSE 2022.4 (local license) or full Questa via ETH floating license (`8161@lic-mentor.ethz.ch`)
+**UVM:** UVM 1.2 bundled with Questa FSE. With ETH license: `rand`, `covergroup`, DPI available.
 
 ---
 
@@ -83,7 +83,7 @@ feb_system (Qsys)
 ### 2.1 Test Method Key
 
 - **Directed (D):** Self-contained SystemVerilog testbench. Hand-crafted stimulus, inline assertion + scoreboard checking. One scenario per test file.
-- **UVM (U):** Promoted to UVM sequence for parametric sweeps. A single `sc_hub_sweep_test` iterates over a parameter range using the LCG PRNG from `mutrig_common_pkg`. Used when exhaustive coverage across a dimension is needed.
+- **UVM (U):** Promoted to UVM sequence for parametric sweeps. A single `sc_hub_sweep_test` iterates over a parameter range. With ETH Questa license, `rand`/`constraint` can drive stimulus randomization. Used when exhaustive coverage across a dimension is needed.
 
 ### 2.2 Relationship to System Plan
 
@@ -141,7 +141,7 @@ sc_hub_tb_top.sv
 |   +-- input     inject_arready_stall, inject_wready_stall
 |   +-- INCR burst support (ARLEN/AWLEN up to 255)
 +-- sc_hub_scoreboard              Reference model: expected reply from command + slave memory
-+-- sc_hub_cov_collector           Counter-based coverage (no covergroup)
++-- sc_hub_cov_collector           Coverage collector (covergroup with ETH license, counter fallback)
 +-- sc_hub_assertions              SVA bind module (protocol + liveness)
 +-- sc_hub_ord_checker             Ordering rule checker (R1-R4 per domain)
 +-- sc_hub_freelist_monitor        Monitors free_count consistency at quiesce
@@ -160,7 +160,7 @@ sc_hub_uvm_tb_top.sv
 |   |   +-- bus_slave_driver_uvm   Responds to bus transactions (memory model)
 |   |   +-- bus_slave_monitor_uvm  Snoops bus signals for scoreboard
 |   +-- sc_hub_scoreboard_uvm      Checks reply against expected
-|   +-- sc_hub_cov_collector_uvm   Counter-based coverage bins
+|   +-- sc_hub_cov_collector_uvm   Coverage collector (covergroup or counter-based)
 |   +-- sc_hub_ord_checker_uvm     Ordering rule monitor (analysis port from bus monitor)
 |   +-- sc_hub_env_cfg             Environment configuration object
 +-- sc_hub_base_test               Base test: build env, apply reset
@@ -359,7 +359,7 @@ slow-control_hub/
 |   |   +-- sc_pkt_seq_item.sv         Sequence item (extended for v2)
 |   |   +-- bus_agent.sv               Bus slave agent
 |   |   +-- sc_hub_scoreboard_uvm.sv   UVM scoreboard
-|   |   +-- sc_hub_cov_collector.sv    Counter-based coverage
+|   |   +-- sc_hub_cov_collector.sv    Coverage collector
 |   |   +-- sc_hub_ord_checker_uvm.sv  Ordering rule monitor
 |   |   +-- sc_hub_base_test.sv        Base UVM test
 |   |   +-- sc_hub_sweep_test.sv       Parameterised sweep test
@@ -386,7 +386,7 @@ slow-control_hub/
 |   |   |   +-- t500_soft_slaveerror.sv       ... (T500-T549)
 |   |   +-- uvm/
 |   |       +-- t123_uvm_sweep_burst_len.sv   ... (T123-T128)
-|   |       +-- t350_uvm_rate_sweep.sv        ... (T350-T360)
+|   |       +-- t350_uvm_rate_sweep.sv        ... (T350-T355)
 |   |
 |   +-- scripts/
 |   |   +-- Makefile                    Compile + run (Questa FSE)
@@ -397,7 +397,7 @@ slow-control_hub/
 |   |   +-- run_perf.sh                 Performance category only
 |   |   +-- run_edge.sh                 Edge cases only
 |   |   +-- run_error.sh                Error cases only
-|   |   +-- coverage_report.sh          Counter-based coverage summary
+|   |   +-- coverage_report.sh          Coverage summary report
 |   |
 |   +-- README.md                       DV quick-start guide
 |
@@ -513,15 +513,20 @@ run_uvm: compile_uvm
 
 ---
 
-## 8. Questa FSE Constraints Checklist
+## 8. Simulator License and Constraints
 
-| Constraint | Mitigation |
-|------------|------------|
-| No `rand` / `constraint` | LCG PRNG in `mutrig_common_pkg` for all stimulus variation |
-| No `covergroup` | Counter-based coverage collectors; cross-coverage via counter pairs |
-| No DPI | `+define+UVM_NO_DPI`, `-nodpiexports` |
-| No GCC linking | `-suppress 19 -suppress 3009` |
-| UVM 1.2 only | `uvm_sequence`, `uvm_driver`, `uvm_monitor` -- no UVM 1.3+ features |
+**Primary:** Questa FSE 2022.4 local license (`/data1/intelFPGA_pro/23.1/questa_fse/LR-287689_License.dat`).
+**Full-feature fallback:** ETH Mentor floating license (`8161@lic-mentor.ethz.ch`) — enables `rand`, `covergroup`, DPI.
+
+| Feature | Questa FSE (local) | Full Questa (ETH license) |
+|---------|-------------------|--------------------------|
+| `rand` / `constraint` | Not available — use manual stimulus | Available |
+| `covergroup` | Not available — use counter-based collectors | Available — preferred |
+| DPI | Not available — `+define+UVM_NO_DPI` | Available |
+| GCC linking | Not available — `-suppress 19 -suppress 3009` | Available |
+| UVM version | UVM 1.2 bundled | UVM 1.2 bundled |
+
+When the ETH license is available, use `covergroup` for coverage and `rand`/`constraint` for stimulus. The counter-based fallback remains for CI environments with only the local FSE license.
 
 ---
 
