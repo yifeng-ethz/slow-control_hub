@@ -1,10 +1,10 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.17
--- Date    : 20260402
--- Change  : Remove the added RX/core staging register and restore the direct
---           handoff because the extra stage regressed standalone timing.
+-- Version : 26.3.1
+-- Date    : 20260403
+-- Change  : Expose the internal CSR bank through a simple Avalon-MM slave
+--           alongside the existing slow-control Avalon master.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -51,7 +51,15 @@ entity sc_hub_top is
         avm_hub_writedata           : out std_logic_vector(31 downto 0);
         avm_hub_waitrequest         : in  std_logic;
         avm_hub_readdatavalid       : in  std_logic;
-        avm_hub_burstcount          : out std_logic_vector(8 downto 0)
+        avm_hub_burstcount          : out std_logic_vector(8 downto 0);
+        avs_csr_address             : in  std_logic_vector(ceil_log2_func(HUB_CSR_WINDOW_WORDS_CONST) - 1 downto 0);
+        avs_csr_read                : in  std_logic;
+        avs_csr_write               : in  std_logic;
+        avs_csr_writedata           : in  std_logic_vector(31 downto 0);
+        avs_csr_readdata            : out std_logic_vector(31 downto 0);
+        avs_csr_readdatavalid       : out std_logic;
+        avs_csr_waitrequest         : out std_logic;
+        avs_csr_burstcount          : in  std_logic_vector(0 downto 0)
     );
 end entity sc_hub_top;
 
@@ -60,14 +68,18 @@ architecture rtl of sc_hub_top is
     signal download_ready_int      : std_logic;
     signal accept_new_pkt_int      : std_logic;
     signal pkt_in_progress         : std_logic;
-    signal pkt_valid               : std_logic;
-    signal pkt_info                : sc_pkt_info_t;
-    signal pkt_is_internal         : std_logic;
+    signal pkt_valid               : std_logic := '0';
+    signal pkt_info                : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal pkt_is_internal         : std_logic := '0';
+    signal pkt_rx_valid            : std_logic;
+    signal pkt_rx_info             : sc_pkt_info_t;
+    signal pkt_rx_is_internal      : std_logic;
     signal wr_data_rdreq           : std_logic;
     signal wr_data_q               : std_logic_vector(31 downto 0);
     signal wr_data_empty           : std_logic;
     signal pkt_drop_count          : std_logic_vector(15 downto 0);
     signal pkt_drop_pulse          : std_logic;
+    signal debug_drop_detail       : std_logic_vector(31 downto 0);
     signal dl_fifo_usedw           : std_logic_vector(9 downto 0);
     signal dl_fifo_full            : std_logic;
     signal dl_fifo_overflow        : std_logic;
@@ -103,6 +115,7 @@ architecture rtl of sc_hub_top is
     signal bus_busy                : std_logic;
     signal bus_timeout_pulse       : std_logic;
     signal rx_ready                : std_logic;
+    signal core_rx_ready           : std_logic;
     signal core_soft_reset_pulse   : std_logic;
     signal rx_soft_reset_pulse     : std_logic;
     signal soft_reset_pulse        : std_logic;
@@ -131,20 +144,55 @@ begin
         i_allow_new_pkt       => rx_ready,
         o_download_ready      => download_ready_int,
         o_pkt_in_progress     => pkt_in_progress,
-        o_pkt_valid           => pkt_valid,
-        o_pkt_info            => pkt_info,
-        o_pkt_is_internal     => pkt_is_internal,
+        o_pkt_valid           => pkt_rx_valid,
+        o_pkt_info            => pkt_rx_info,
+        o_pkt_is_internal     => pkt_rx_is_internal,
         o_soft_reset_pulse    => rx_soft_reset_pulse,
         i_wr_data_rdreq       => wr_data_rdreq,
         o_wr_data_q           => wr_data_q,
         o_wr_data_empty       => wr_data_empty,
         o_pkt_drop_count      => pkt_drop_count,
         o_pkt_drop_pulse      => pkt_drop_pulse,
+        o_debug_drop_detail   => debug_drop_detail,
         o_fifo_usedw          => dl_fifo_usedw,
         o_fifo_full           => dl_fifo_full,
         o_fifo_overflow       => dl_fifo_overflow,
         o_fifo_overflow_pulse => dl_fifo_overflow_pulse
     );
+
+    rx_ready <= '1' when (pkt_valid = '0' or core_rx_ready = '1') else '0';
+
+    rx_pkt_stage : process(i_clk)
+        variable pkt_valid_v       : std_logic;
+        variable pkt_info_v        : sc_pkt_info_t;
+        variable pkt_is_internal_v : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if (hub_reset_int = '1') then
+                pkt_valid       <= '0';
+                pkt_info        <= SC_PKT_INFO_RESET_CONST;
+                pkt_is_internal <= '0';
+            else
+                pkt_valid_v       := pkt_valid;
+                pkt_info_v        := pkt_info;
+                pkt_is_internal_v := pkt_is_internal;
+
+                if (pkt_rx_valid = '1' and (pkt_valid = '0' or core_rx_ready = '1')) then
+                    pkt_valid_v       := '1';
+                    pkt_info_v        := pkt_rx_info;
+                    pkt_is_internal_v := pkt_rx_is_internal;
+                elsif (pkt_valid = '1' and core_rx_ready = '1') then
+                    pkt_valid_v       := '0';
+                    pkt_info_v        := SC_PKT_INFO_RESET_CONST;
+                    pkt_is_internal_v := '0';
+                end if;
+
+                pkt_valid       <= pkt_valid_v;
+                pkt_info        <= pkt_info_v;
+                pkt_is_internal <= pkt_is_internal_v;
+            end if;
+        end if;
+    end process rx_pkt_stage;
 
     pkt_tx_inst : entity work.sc_hub_pkt_tx
     generic map(
@@ -194,13 +242,14 @@ begin
         i_pkt_valid              => pkt_valid,
         i_pkt_info               => pkt_info,
         i_pkt_is_internal        => pkt_is_internal,
-        o_rx_ready               => rx_ready,
+        o_rx_ready               => core_rx_ready,
         o_soft_reset_pulse       => core_soft_reset_pulse,
         o_wr_data_rdreq          => wr_data_rdreq,
         i_wr_data_q              => wr_data_q,
         i_wr_data_empty          => wr_data_empty,
         i_pkt_drop_count         => pkt_drop_count,
         i_pkt_drop_pulse         => pkt_drop_pulse,
+        i_debug_drop_detail      => debug_drop_detail,
         i_dl_fifo_usedw          => dl_fifo_usedw,
         i_dl_fifo_full           => dl_fifo_full,
         i_dl_fifo_overflow       => dl_fifo_overflow,
@@ -233,7 +282,14 @@ begin
         i_bus_done               => bus_done,
         i_bus_response           => bus_response,
         i_bus_busy               => bus_busy,
-        i_bus_timeout_pulse      => bus_timeout_pulse
+        i_bus_timeout_pulse      => bus_timeout_pulse,
+        avs_csr_address          => avs_csr_address,
+        avs_csr_read             => avs_csr_read,
+        avs_csr_write            => avs_csr_write,
+        avs_csr_writedata        => avs_csr_writedata,
+        avs_csr_readdata         => avs_csr_readdata,
+        avs_csr_readdatavalid    => avs_csr_readdatavalid,
+        avs_csr_waitrequest      => avs_csr_waitrequest
     );
 
     avmm_handler_inst : entity work.sc_hub_avmm_handler
