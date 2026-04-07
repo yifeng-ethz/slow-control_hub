@@ -59,6 +59,7 @@ package sc_hub_pkg is
     constant HUB_CSR_WO_OOO_CTRL_CONST      : natural := 16#018#;
     constant HUB_CSR_WO_ORD_DRAIN_CNT_CONST : natural := 16#019#;
     constant HUB_CSR_WO_ORD_HOLD_CNT_CONST  : natural := 16#01A#;
+    constant HUB_CSR_WO_DBG_DROP_DETAIL_CONST : natural := 16#01B#;
     constant HUB_CSR_WO_HUB_CAP_CONST       : natural := 16#01F#;
 
     constant HUB_ERR_UP_FIFO_OVERFLOW_CONST   : natural := 0;

@@ -1,10 +1,18 @@
 -- File name: sc_hub_pkt_rx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.26
--- Date    : 20260402
--- Change  : Publish packets through a registered output head and only refill it
---           from packets that were already buffered at the start of the cycle.
+-- Version : 26.2.29
+-- Date    : 20260406
+-- Change  : Pre-compute payload_space_granted during LENGTHING state (1 cycle
+--           earlier) so the grant is already registered when WAITING_WRITE_SPACE
+--           begins. Fixes SC write drops when transceiver rate adaptation
+--           deletes the idle word between LENGTH and DATA (back-to-back delivery).
+--           Fully registered path -- no new combinational timing risk.
+-- =======================================
+-- Version : 26.2.28
+-- Date    : 20260405
+-- Change  : Add local reset register (rst_local) to reduce fanout from the
+--           Qsys reset controller, fixing the -1.635 ns reset path violation.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -40,6 +48,11 @@ entity sc_hub_pkt_rx is
         o_wr_data_empty      : out std_logic;
         o_pkt_drop_count     : out std_logic_vector(15 downto 0);
         o_pkt_drop_pulse     : out std_logic;
+        -- Debug: 32-bit word with per-path drop detail
+        -- bits 15:0  = restart_drop_count (premature preamble restart drops)
+        -- bits 23:16 = ws_trailer_drop_count[7:0] (trailer in WAITING_WRITE_SPACE)
+        -- bits 31:24 = idle_timeout_drop_count[7:0]
+        o_debug_drop_detail  : out std_logic_vector(31 downto 0);
         o_fifo_usedw         : out std_logic_vector(9 downto 0);
         o_fifo_full          : out std_logic;
         o_fifo_overflow      : out std_logic;
@@ -62,6 +75,10 @@ architecture rtl of sc_hub_pkt_rx is
     subtype write_word_count_t is natural range 0 to MAX_BURST_G;
     type pkt_queue_mem_t is array (pkt_queue_index_t) of sc_pkt_info_t;
     type pkt_queue_flag_mem_t is array (pkt_queue_index_t) of std_logic;
+    constant ENQUEUE_STAGE_DEPTH_CONST : positive := 2;
+    subtype enqueue_stage_index_t is natural range 0 to ENQUEUE_STAGE_DEPTH_CONST - 1;
+    type enqueue_stage_mem_t is array (enqueue_stage_index_t) of sc_pkt_info_t;
+    type enqueue_stage_flag_mem_t is array (enqueue_stage_index_t) of std_logic;
 
     signal rx_state              : rx_state_t := IDLING;
     signal pkt_info_work         : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
@@ -88,6 +105,12 @@ architecture rtl of sc_hub_pkt_rx is
     signal pkt_queue_rd_ptr      : pkt_queue_index_t := 0;
     signal pkt_queue_wr_ptr      : pkt_queue_index_t := 0;
     signal pkt_queue_count       : natural range 0 to PKT_QUEUE_DEPTH_G := 0;
+    signal enqueue_stage_mem     : enqueue_stage_mem_t := (others => SC_PKT_INFO_RESET_CONST);
+    signal enqueue_stage_is_internal : enqueue_stage_flag_mem_t := (others => '0');
+    signal enqueue_stage_allow_bypass : enqueue_stage_flag_mem_t := (others => '0');
+    signal enqueue_stage_rd_ptr  : enqueue_stage_index_t := 0;
+    signal enqueue_stage_wr_ptr  : enqueue_stage_index_t := 0;
+    signal enqueue_stage_count   : natural range 0 to ENQUEUE_STAGE_DEPTH_CONST := 0;
     signal int_pkt_valid         : std_logic := '0';
     signal int_pkt_info          : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
     signal int_pkt_is_internal   : std_logic := '0';
@@ -98,10 +121,24 @@ architecture rtl of sc_hub_pkt_rx is
     signal debug_enqueue_count   : unsigned(31 downto 0) := (others => '0');
     signal debug_restart_count   : unsigned(31 downto 0) := (others => '0');
     signal debug_ignored_preamble_count : unsigned(31 downto 0) := (others => '0');
+    -- Per-path drop counters for debug
+    signal debug_restart_drop_count     : unsigned(15 downto 0) := (others => '0');
+    signal debug_ws_trailer_drop_count  : unsigned(7 downto 0) := (others => '0');
+    signal debug_idle_timeout_drop_count: unsigned(7 downto 0) := (others => '0');
     signal payload_check_words   : write_word_count_t := 0;
     signal payload_space_granted : std_logic := '0';
     signal payload_space_ready   : std_logic := '1';
     signal pkt_info_is_internal  : std_logic := '0';
+
+    -- Local reset register to reduce fanout and routing delay from the
+    -- Qsys reset controller.  The upstream r_sync_rst already provides a
+    -- synchronised, deasserted-synchronously reset, so one extra register
+    -- stage only adds a single cycle of reset release latency which is
+    -- harmless (the link is idle during reset).
+    -- Attribute keeps Quartus from merging it back into the global net.
+    signal rst_local             : std_logic := '1';
+    attribute preserve : boolean;
+    attribute preserve of rst_local : signal is true;
 
     function is_sc_preamble_func (
         data_in  : std_logic_vector(31 downto 0);
@@ -174,6 +211,17 @@ architecture rtl of sc_hub_pkt_rx is
         end if;
     end function next_pkt_queue_index_func;
 
+    function next_enqueue_stage_index_func (
+        value_in : enqueue_stage_index_t
+    ) return enqueue_stage_index_t is
+    begin
+        if (value_in = ENQUEUE_STAGE_DEPTH_CONST - 1) then
+            return 0;
+        else
+            return value_in + 1;
+        end if;
+    end function next_enqueue_stage_index_func;
+
 begin
     fifo_inst : entity work.sc_hub_fifo_sf
     generic map(
@@ -206,6 +254,9 @@ begin
     o_soft_reset_pulse    <= soft_reset_pulse;
     o_pkt_drop_count      <= std_logic_vector(pkt_drop_count);
     o_pkt_drop_pulse      <= pkt_drop_pulse;
+    o_debug_drop_detail   <= std_logic_vector(debug_idle_timeout_drop_count)
+                           & std_logic_vector(debug_ws_trailer_drop_count)
+                           & std_logic_vector(debug_restart_drop_count);
     o_fifo_usedw          <= std_logic_vector(resize(unsigned(fifo_usedw_raw), o_fifo_usedw'length));
     o_fifo_full           <= fifo_full_int;
     o_fifo_overflow       <= fifo_overflow_sticky;
@@ -220,18 +271,50 @@ begin
 
     o_download_ready <= '1'
         when (
-            (rx_state = IDLING and pkt_queue_count < PKT_QUEUE_DEPTH_G) or
+            (rx_state = IDLING and enqueue_stage_count < ENQUEUE_STAGE_DEPTH_CONST) or
             (rx_state /= IDLING and payload_space_ready = '1')
         )
         else '0';
 
+    -- Re-register the external reset locally to cut the long-wire fanout
+    -- path from the Qsys reset controller (violation #1, -1.635 ns).
+    rst_local_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            rst_local <= i_rst;
+        end if;
+    end process rst_local_reg;
+
+    -- Pre-compute space check: starts evaluation during LENGTHING (1 cycle
+    -- before WAITING_WRITE_SPACE) so the grant is already registered and
+    -- ready when the first write data word arrives.  Fixes write packet drops
+    -- when the transceiver rate adaptation deletes the idle word between
+    -- LENGTH and DATA (back-to-back delivery).
+    --
+    -- During LENGTHING the length value sits on i_download_data(15:0); we
+    -- use it directly for the space arithmetic.  The registered output is
+    -- available the same cycle the state machine enters WAITING_WRITE_SPACE.
+    -- During WAITING_WRITE_SPACE the check continues with the latched
+    -- payload_check_words so subsequent burst words are still gated.
     payload_space_checker : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if (i_rst = '1' or i_soft_reset = '1') then
+            if (rst_local = '1' or i_soft_reset = '1') then
                 payload_space_granted <= '0';
+            elsif (rx_state = LENGTHING and i_download_datak = "0000") then
+                -- Pre-compute: use raw length from the bus during LENGTHING
+                if (to_integer(unsigned(i_download_data(15 downto 0))) > 0 and
+                    to_integer(unsigned(fifo_usedw_raw))
+                        + to_integer(unsigned(i_download_data(15 downto 0)))
+                        <= EXT_PLD_DEPTH_G) then
+                    payload_space_granted <= '1';
+                else
+                    payload_space_granted <= '0';
+                end if;
             elsif (rx_state = WAITING_WRITE_SPACE) then
-                if (to_integer(unsigned(fifo_usedw_raw)) + payload_check_words <= EXT_PLD_DEPTH_G) then
+                -- Continue monitoring with latched payload_check_words
+                if (to_integer(unsigned(fifo_usedw_raw)) + payload_check_words
+                        <= EXT_PLD_DEPTH_G) then
                     payload_space_granted <= '1';
                 else
                     payload_space_granted <= '0';
@@ -257,6 +340,9 @@ begin
         variable queue_rd_ptr_v   : pkt_queue_index_t;
         variable queue_wr_ptr_v   : pkt_queue_index_t;
         variable queue_count_v            : natural range 0 to PKT_QUEUE_DEPTH_G;
+        variable enqueue_stage_rd_ptr_v   : enqueue_stage_index_t;
+        variable enqueue_stage_wr_ptr_v   : enqueue_stage_index_t;
+        variable enqueue_stage_count_v    : natural range 0 to ENQUEUE_STAGE_DEPTH_CONST;
         variable int_pkt_valid_v          : std_logic;
         variable int_pkt_info_v           : sc_pkt_info_t;
         variable int_pkt_is_internal_v    : std_logic;
@@ -267,7 +353,7 @@ begin
         variable pkt_info_complete_v      : sc_pkt_info_t;
     begin
         if rising_edge(i_clk) then
-            if (i_rst = '1' or i_soft_reset = '1') then
+            if (rst_local = '1' or i_soft_reset = '1') then
                 rx_state             <= IDLING;
                 pkt_info_work        <= SC_PKT_INFO_RESET_CONST;
                 pkt_drop_count       <= (others => '0');
@@ -288,6 +374,12 @@ begin
                 pkt_queue_rd_ptr     <= 0;
                 pkt_queue_wr_ptr     <= 0;
                 pkt_queue_count      <= 0;
+                enqueue_stage_mem    <= (others => SC_PKT_INFO_RESET_CONST);
+                enqueue_stage_is_internal <= (others => '0');
+                enqueue_stage_allow_bypass <= (others => '0');
+                enqueue_stage_rd_ptr <= 0;
+                enqueue_stage_wr_ptr <= 0;
+                enqueue_stage_count  <= 0;
                 int_pkt_valid        <= '0';
                 int_pkt_info         <= SC_PKT_INFO_RESET_CONST;
                 int_pkt_is_internal  <= '0';
@@ -297,6 +389,9 @@ begin
                 debug_enqueue_count        <= (others => '0');
                 debug_restart_count        <= (others => '0');
                 debug_ignored_preamble_count <= (others => '0');
+                debug_restart_drop_count   <= (others => '0');
+                debug_ws_trailer_drop_count <= (others => '0');
+                debug_idle_timeout_drop_count <= (others => '0');
                 trailer_wait_committed     <= '0';
                 payload_check_words        <= 0;
                 pkt_info_is_internal       <= '0';
@@ -316,6 +411,9 @@ begin
                 queue_rd_ptr_v      := pkt_queue_rd_ptr;
                 queue_wr_ptr_v      := pkt_queue_wr_ptr;
                 queue_count_v       := pkt_queue_count;
+                enqueue_stage_rd_ptr_v := enqueue_stage_rd_ptr;
+                enqueue_stage_wr_ptr_v := enqueue_stage_wr_ptr;
+                enqueue_stage_count_v  := enqueue_stage_count;
                 int_pkt_valid_v          := int_pkt_valid;
                 int_pkt_info_v           := int_pkt_info;
                 int_pkt_is_internal_v    := int_pkt_is_internal;
@@ -342,6 +440,27 @@ begin
                     fifo_overflow_pulse  <= '1';
                 end if;
 
+                if (enqueue_stage_count /= 0) then
+                    if (
+                        enqueue_stage_is_internal(enqueue_stage_rd_ptr) = '1' and
+                        enqueue_stage_allow_bypass(enqueue_stage_rd_ptr) = '1' and
+                        int_pkt_valid_v = '0'
+                    ) then
+                        int_pkt_info_v        := enqueue_stage_mem(enqueue_stage_rd_ptr);
+                        int_pkt_is_internal_v := '1';
+                        int_pkt_valid_v       := '1';
+                        enqueue_stage_rd_ptr_v := next_enqueue_stage_index_func(enqueue_stage_rd_ptr_v);
+                        enqueue_stage_count_v  := enqueue_stage_count_v - 1;
+                    elsif (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                        pkt_queue_mem(queue_wr_ptr_v) <= enqueue_stage_mem(enqueue_stage_rd_ptr);
+                        pkt_queue_is_internal(queue_wr_ptr_v) <= enqueue_stage_is_internal(enqueue_stage_rd_ptr);
+                        queue_wr_ptr_v := next_pkt_queue_index_func(queue_wr_ptr_v);
+                        queue_count_v  := queue_count_v + 1;
+                        enqueue_stage_rd_ptr_v := next_enqueue_stage_index_func(enqueue_stage_rd_ptr_v);
+                        enqueue_stage_count_v  := enqueue_stage_count_v - 1;
+                    end if;
+                end if;
+
                 if (rx_state /= IDLING and rx_state /= WAITING_WRITE_SPACE) then
                     if (
                         is_skip_v = true or
@@ -356,6 +475,7 @@ begin
 
                     if (idle_cycles = PKT_TIMEOUT_CYCLES) then
                         drop_packet_v := true;
+                        debug_idle_timeout_drop_count <= debug_idle_timeout_drop_count + 1;
                     end if;
                 else
                     idle_cycles <= 0;
@@ -367,6 +487,7 @@ begin
                         fifo_rollback  <= '1';
                         pkt_drop_pulse <= '1';
                         pkt_drop_count <= sat_inc16_func(pkt_drop_count);
+                        debug_restart_drop_count <= sat_inc16_func(debug_restart_drop_count);
                     end if;
                     pkt_info_work.sc_type        <= i_download_data(25 downto 24);
                     pkt_info_work.fpga_id        <= i_download_data(23 downto 8);
@@ -392,7 +513,7 @@ begin
                 else
                     case rx_state is
                         when IDLING =>
-                            if (pkt_queue_count < PKT_QUEUE_DEPTH_G and is_preamble_v = true) then
+                            if (enqueue_stage_count < ENQUEUE_STAGE_DEPTH_CONST and is_preamble_v = true) then
                                 pkt_info_work.sc_type       <= i_download_data(25 downto 24);
                                 pkt_info_work.fpga_id       <= i_download_data(23 downto 8);
                                 pkt_info_work.start_address <= (others => '0');
@@ -469,7 +590,7 @@ begin
                                 elsif (pkt_info_work.atomic_flag = '1') then
                                     rx_state <= ATOMIC_MASKING;
                                 elsif (has_download_words_v = false) then
-                                    if (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                                    if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                                         enqueue_pkt_info_v        := pkt_info_complete_v;
                                         enqueue_pkt_is_internal_v := pkt_info_is_internal;
                                         enqueue_allow_bypass_v    := false;
@@ -498,6 +619,7 @@ begin
                                     null;
                                 elsif (is_trailer_v = true or is_preamble_v = true) then
                                     drop_packet_v := true;
+                                    debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;
                                 else
                                     fifo_write_en   <= '1';
                                     fifo_write_data <= i_download_data;
@@ -606,7 +728,7 @@ begin
                             fifo_rollback    <= '1';
                             soft_reset_pulse <= '1';
                         elsif (pkt_has_download_words_func(pkt_info_work) = false) then
-                            if (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                            if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                                 fifo_commit        <= '1';
                                 enqueue_pkt_info_v := pkt_info_work;
                                 enqueue_pkt_is_internal_v := pkt_info_is_internal;
@@ -621,7 +743,7 @@ begin
                             pkt_info_work.atomic_flag = '0' and
                             unsigned(pkt_info_work.rw_length) = 1
                         ) then
-                            if (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                            if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                                 fifo_rollback                <= '1';
                                 enqueue_pkt_info_v           := pkt_info_work;
                                 enqueue_pkt_info_v.atomic_data := first_write_word;
@@ -632,7 +754,7 @@ begin
                                 pkt_drop_pulse <= '1';
                                 pkt_drop_count <= sat_inc16_func(pkt_drop_count);
                             end if;
-                        elsif (queue_count_v < PKT_QUEUE_DEPTH_G) then
+                        elsif (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                             fifo_commit        <= '1';
                             enqueue_pkt_info_v := pkt_info_work;
                             enqueue_pkt_is_internal_v := pkt_info_is_internal;
@@ -648,23 +770,16 @@ begin
 
                     if (enqueue_queue_v = true) then
                         debug_enqueue_count <= sat_inc32_func(debug_enqueue_count);
-                        if (
-                            enqueue_pkt_is_internal_v = '1' and
-                            enqueue_allow_bypass_v = true and
-                            int_pkt_valid_v = '0'
-                        ) then
-                            int_pkt_info_v        := enqueue_pkt_info_v;
-                            int_pkt_is_internal_v := '1';
-                            int_pkt_valid_v       := '1';
-                        else
-                            pkt_queue_mem(queue_wr_ptr_v)         <= enqueue_pkt_info_v;
-                            if (enqueue_pkt_is_internal_v = '1') then
-                                pkt_queue_is_internal(queue_wr_ptr_v) <= '1';
+                        if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
+                            enqueue_stage_mem(enqueue_stage_wr_ptr_v) <= enqueue_pkt_info_v;
+                            enqueue_stage_is_internal(enqueue_stage_wr_ptr_v) <= enqueue_pkt_is_internal_v;
+                            if (enqueue_allow_bypass_v) then
+                                enqueue_stage_allow_bypass(enqueue_stage_wr_ptr_v) <= '1';
                             else
-                                pkt_queue_is_internal(queue_wr_ptr_v) <= '0';
+                                enqueue_stage_allow_bypass(enqueue_stage_wr_ptr_v) <= '0';
                             end if;
-                            queue_wr_ptr_v                        := next_pkt_queue_index_func(queue_wr_ptr_v);
-                            queue_count_v                         := queue_count_v + 1;
+                            enqueue_stage_wr_ptr_v := next_enqueue_stage_index_func(enqueue_stage_wr_ptr_v);
+                            enqueue_stage_count_v  := enqueue_stage_count_v + 1;
                         end if;
                     end if;
 
@@ -693,6 +808,9 @@ begin
                 pkt_queue_rd_ptr <= queue_rd_ptr_v;
                 pkt_queue_wr_ptr <= queue_wr_ptr_v;
                 pkt_queue_count  <= queue_count_v;
+                enqueue_stage_rd_ptr <= enqueue_stage_rd_ptr_v;
+                enqueue_stage_wr_ptr <= enqueue_stage_wr_ptr_v;
+                enqueue_stage_count  <= enqueue_stage_count_v;
                 int_pkt_valid    <= int_pkt_valid_v;
                 int_pkt_info     <= int_pkt_info_v;
                 int_pkt_is_internal <= int_pkt_is_internal_v;
