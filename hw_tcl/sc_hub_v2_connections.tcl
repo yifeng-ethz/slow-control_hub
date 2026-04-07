@@ -15,6 +15,7 @@ proc sc_hub_v2_build_interfaces {} {
     sc_hub_v2_build_clock_reset
     sc_hub_v2_build_download_conduit
     sc_hub_v2_build_upload_streaming
+    sc_hub_v2_build_csr_slave
 
     # Bus master: AVMM or AXI4
     catch {remove_interface hub}
@@ -69,6 +70,38 @@ proc sc_hub_v2_build_upload_streaming {} {
     add_interface_port upload aso_upload_ready ready Input 1
     add_interface_port upload aso_upload_startofpacket startofpacket Output 1
     add_interface_port upload aso_upload_endofpacket endofpacket Output 1
+}
+
+proc sc_hub_v2_build_csr_slave {} {
+    catch {remove_interface csr}
+
+    add_interface csr avalon end
+    set_interface_property csr addressUnits WORDS
+    set_interface_property csr associatedClock hub_clock
+    set_interface_property csr associatedReset hub_reset
+    set_interface_property csr bitsPerSymbol 8
+    set_interface_property csr burstOnBurstBoundariesOnly false
+    set_interface_property csr burstcountUnits WORDS
+    set_interface_property csr explicitAddressSpan 0
+    set_interface_property csr holdTime 0
+    set_interface_property csr linewrapBursts false
+    set_interface_property csr maximumPendingReadTransactions 1
+    set_interface_property csr maximumPendingWriteTransactions 0
+    set_interface_property csr readLatency 0
+    set_interface_property csr readWaitTime 1
+    set_interface_property csr setupTime 0
+    set_interface_property csr timingUnits Cycles
+    set_interface_property csr writeWaitTime 0
+    set_interface_property csr ENABLED true
+
+    add_interface_port csr avs_csr_address address Input 5
+    add_interface_port csr avs_csr_read read Input 1
+    add_interface_port csr avs_csr_write write Input 1
+    add_interface_port csr avs_csr_writedata writedata Input 32
+    add_interface_port csr avs_csr_readdata readdata Output 32
+    add_interface_port csr avs_csr_readdatavalid readdatavalid Output 1
+    add_interface_port csr avs_csr_waitrequest waitrequest Output 1
+    add_interface_port csr avs_csr_burstcount burstcount Input 1
 }
 
 proc sc_hub_v2_build_avmm_master {} {
