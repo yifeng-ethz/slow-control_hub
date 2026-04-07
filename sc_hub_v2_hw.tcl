@@ -44,7 +44,7 @@ set_module_property EDITABLE                true
 set_module_property REPORT_TO_TALKBACK      false
 set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY        false
-set_module_property ICON_PATH               ../figures/mu3e_logo.png
+set_module_property ICON_PATH               ../quartus_system/logo/mu3e_logo.png
 
 # Callbacks — routed to sub-file procs
 set_module_property ELABORATION_CALLBACK    sc_hub_v2_elaborate
