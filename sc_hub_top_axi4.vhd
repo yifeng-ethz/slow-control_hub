@@ -1,9 +1,11 @@
 -- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.3.0
+-- Version : 26.3.1
 -- Date    : 20260331
--- Change  : Add compile-time ordering/atomic capability controls for the AXI4 path.
+-- Change  : Decouple the RX packet handoff into the AXI4 core with a
+--           registered single-entry stage instead of same-cycle ready
+--           forwarding.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -77,8 +79,10 @@ architecture rtl of sc_hub_top_axi4 is
     signal download_ready_int      : std_logic;
     signal accept_new_pkt_int      : std_logic;
     signal pkt_in_progress         : std_logic;
-    signal pkt_valid               : std_logic;
-    signal pkt_info                : sc_pkt_info_t;
+    signal pkt_valid               : std_logic := '0';
+    signal pkt_info                : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal pkt_rx_valid            : std_logic;
+    signal pkt_rx_info             : sc_pkt_info_t;
     signal wr_data_rdreq           : std_logic;
     signal wr_data_q               : std_logic_vector(31 downto 0);
     signal wr_data_empty           : std_logic;
@@ -131,6 +135,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_rd_response         : std_logic_vector(1 downto 0);
     signal bus_busy                : std_logic;
     signal rx_ready                : std_logic;
+    signal core_rx_ready           : std_logic;
     signal core_soft_reset_pulse   : std_logic;
     signal rx_soft_reset_pulse     : std_logic;
     signal soft_reset_pulse        : std_logic;
@@ -155,8 +160,8 @@ begin
         i_allow_new_pkt       => rx_ready,
         o_download_ready      => download_ready_int,
         o_pkt_in_progress     => pkt_in_progress,
-        o_pkt_valid           => pkt_valid,
-        o_pkt_info            => pkt_info,
+        o_pkt_valid           => pkt_rx_valid,
+        o_pkt_info            => pkt_rx_info,
         o_soft_reset_pulse    => rx_soft_reset_pulse,
         i_wr_data_rdreq       => wr_data_rdreq,
         o_wr_data_q           => wr_data_q,
@@ -168,6 +173,34 @@ begin
         o_fifo_overflow       => dl_fifo_overflow,
         o_fifo_overflow_pulse => dl_fifo_overflow_pulse
     );
+
+    rx_ready <= '1' when (pkt_valid = '0') else '0';
+
+    rx_pkt_stage : process(i_clk)
+        variable pkt_valid_v : std_logic;
+        variable pkt_info_v  : sc_pkt_info_t;
+    begin
+        if rising_edge(i_clk) then
+            if (hub_reset_int = '1') then
+                pkt_valid <= '0';
+                pkt_info  <= SC_PKT_INFO_RESET_CONST;
+            else
+                pkt_valid_v := pkt_valid;
+                pkt_info_v  := pkt_info;
+
+                if (pkt_rx_valid = '1' and pkt_valid = '0') then
+                    pkt_valid_v := '1';
+                    pkt_info_v  := pkt_rx_info;
+                elsif (pkt_valid = '1' and core_rx_ready = '1') then
+                    pkt_valid_v := '0';
+                    pkt_info_v  := SC_PKT_INFO_RESET_CONST;
+                end if;
+
+                pkt_valid <= pkt_valid_v;
+                pkt_info  <= pkt_info_v;
+            end if;
+        end if;
+    end process rx_pkt_stage;
 
     pkt_tx_inst : entity work.sc_hub_pkt_tx
     port map(
@@ -212,7 +245,7 @@ begin
         i_rst                    => hub_reset_int,
         i_pkt_valid              => pkt_valid,
         i_pkt_info               => pkt_info,
-        o_rx_ready               => rx_ready,
+        o_rx_ready               => core_rx_ready,
         o_soft_reset_pulse       => core_soft_reset_pulse,
         o_wr_data_rdreq          => wr_data_rdreq,
         i_wr_data_q              => wr_data_q,

@@ -67,6 +67,8 @@ architecture rtl of sc_hub_pkt_tx is
     signal bp_overflow_pulse    : std_logic := '0';
     signal pkt_count            : natural range 0 to BP_FIFO_DEPTH_G := 0;
     signal pkt_inc_pending      : std_logic := '0';
+    signal data_stage_valid     : std_logic := '0';
+    signal data_stage_word      : std_logic_vector(31 downto 0) := (others => '0');
 
     function required_words_func (
         reply_has_data : std_logic;
@@ -123,13 +125,21 @@ begin
         )
         else '0';
 
-    o_data_ready <= '1' when (tx_state = EMITTING_DATA and bp_fifo_full = '0') else '0';
+    o_data_ready <= '1'
+        when (
+            tx_state = EMITTING_DATA and
+            (data_stage_valid = '0' or bp_fifo_full = '0')
+        )
+        else '0';
 
     reply_formatter : process(i_clk)
         variable packet_word_v : std_logic_vector(39 downto 0);
         variable start_pkt_v   : boolean;
         variable wrote_word_v  : boolean;
         variable pkt_count_v   : natural range 0 to BP_FIFO_DEPTH_G;
+        variable emit_stage_v  : boolean;
+        variable stage_valid_v : std_logic;
+        variable stage_word_v  : std_logic_vector(31 downto 0);
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1' or i_soft_reset = '1') then
@@ -145,6 +155,8 @@ begin
                 bp_overflow_pulse  <= '0';
                 pkt_count          <= 0;
                 pkt_inc_pending    <= '0';
+                data_stage_valid   <= '0';
+                data_stage_word    <= (others => '0');
             else
                 bp_fifo_write_en   <= '0';
                 bp_fifo_write_data <= (others => '0');
@@ -154,6 +166,9 @@ begin
                 wrote_word_v       := false;
                 packet_word_v      := (others => '0');
                 pkt_count_v        := pkt_count;
+                emit_stage_v       := false;
+                stage_valid_v      := data_stage_valid;
+                stage_word_v       := data_stage_word;
 
                 if (bp_fifo_read_en = '1' and bp_fifo_read_data(37) = '1' and pkt_count_v > 0) then
                     pkt_count_v := pkt_count_v - 1;
@@ -177,6 +192,8 @@ begin
                         tx_state           <= EMITTING_PREAMBLE;
                         start_pkt_v        := true;
                         pkt_inc_pending    <= '1';
+                        stage_valid_v      := '0';
+                        stage_word_v       := (others => '0');
                     end if;
                 end if;
 
@@ -217,9 +234,10 @@ begin
                         end if;
 
                     when EMITTING_DATA =>
-                        if (i_data_valid = '1' and bp_fifo_full = '0') then
-                            packet_word_v(31 downto 0) := i_data_word;
+                        if (data_stage_valid = '1' and bp_fifo_full = '0') then
+                            packet_word_v(31 downto 0) := data_stage_word;
                             wrote_word_v               := true;
+                            emit_stage_v               := true;
                             if (words_remaining > 0) then
                                 words_remaining <= words_remaining - 1;
                             end if;
@@ -238,6 +256,16 @@ begin
                         reply_done_pulse           <= '1';
                 end case;
 
+                if (tx_state = EMITTING_DATA) then
+                    if (i_data_valid = '1' and (data_stage_valid = '0' or bp_fifo_full = '0')) then
+                        stage_valid_v := '1';
+                        stage_word_v  := i_data_word;
+                    elsif (emit_stage_v = true) then
+                        stage_valid_v := '0';
+                        stage_word_v  := (others => '0');
+                    end if;
+                end if;
+
                 if (wrote_word_v = true) then
                     if (bp_fifo_full = '0') then
                         bp_fifo_write_en   <= '1';
@@ -249,6 +277,8 @@ begin
                 end if;
 
                 pkt_count <= pkt_count_v;
+                data_stage_valid <= stage_valid_v;
+                data_stage_word  <= stage_word_v;
             end if;
         end if;
     end process reply_formatter;
