@@ -59,7 +59,7 @@ entity sc_hub_top is
         avs_csr_readdata            : out std_logic_vector(31 downto 0);
         avs_csr_readdatavalid       : out std_logic;
         avs_csr_waitrequest         : out std_logic;
-        avs_csr_burstcount          : in  std_logic_vector(0 downto 0)
+        avs_csr_burstcount          : in  std_logic
     );
 end entity sc_hub_top;
 
