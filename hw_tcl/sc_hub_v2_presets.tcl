@@ -457,9 +457,10 @@ proc sc_hub_v2_apply_preset {preset_name} {
 
     set params [dict get $SC_HUB_V2_PRESETS $preset_name]
     dict for {pname pval} $params {
-        if {[catch {set_parameter_value $pname $pval} err]} {
-            send_message warning "Preset $preset_name: failed to set $pname=$pval: $err"
-        }
+        # During elaboration, set_parameter_value only works for DERIVED
+        # parameters. Non-DERIVED values are already persisted in the .qsys
+        # XML, so silently skip failures instead of emitting warnings.
+        catch {set_parameter_value $pname $pval}
     }
 }
 
