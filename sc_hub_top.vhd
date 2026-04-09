@@ -1,10 +1,11 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.3.1
--- Date    : 20260403
--- Change  : Expose the internal CSR bank through a simple Avalon-MM slave
---           alongside the existing slow-control Avalon master.
+-- Version : 26.3.2
+-- Date    : 20260409
+-- Change  : Register soft_reset_pulse to break combinational path from
+--           pkt_rx output into core ext_write_diag_data_hold enable chain.
+--           Standalone critical path was -0.071 ns at 171.9 MHz.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -118,7 +119,8 @@ architecture rtl of sc_hub_top is
     signal core_rx_ready           : std_logic;
     signal core_soft_reset_pulse   : std_logic;
     signal rx_soft_reset_pulse     : std_logic;
-    signal soft_reset_pulse        : std_logic;
+    signal soft_reset_comb         : std_logic;
+    signal soft_reset_pulse        : std_logic := '0';
     signal hub_reset_int           : std_logic;
 begin
     gen_invert_ready : if INVERT_RD_SIG generate
@@ -327,8 +329,23 @@ begin
         avm_hub_burstcount      => avm_hub_burstcount
     );
 
-    soft_reset_pulse <= core_soft_reset_pulse or rx_soft_reset_pulse;
-    hub_reset_int    <= i_rst or soft_reset_pulse;
+    -- Rev 26.3.2: Register the soft-reset OR to break the combinational path
+    -- from pkt_rx_inst|soft_reset_pulse through hub_reset_int into core_inst.
+    -- One cycle of latency on the soft-reset path is acceptable (rare event).
+    soft_reset_comb <= core_soft_reset_pulse or rx_soft_reset_pulse;
+
+    soft_reset_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if (i_rst = '1') then
+                soft_reset_pulse <= '0';
+            else
+                soft_reset_pulse <= soft_reset_comb;
+            end if;
+        end if;
+    end process soft_reset_reg;
+
+    hub_reset_int <= i_rst or soft_reset_pulse;
 
     accept_new_pkt_int <= '1'
         when ((not BACKPRESSURE) or bp_half_full = '0')
