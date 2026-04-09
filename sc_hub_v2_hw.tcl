@@ -1,6 +1,6 @@
 # ============================================================================
-# sc_hub_v2 "Slow Control Hub v2" v26.3.0
-# Yifeng Wang 2026.03.31
+# sc_hub_v2 "Slow Control Hub v2" v26.4.0
+# Yifeng Wang 2026.04.08
 #
 # Comprehensive _hw.tcl for sc_hub_v2 with:
 #   - Preset-based configuration (JESD204B GUI style)
@@ -29,7 +29,7 @@ package require -exact qsys 16.1
 
 set_module_property NAME                    sc_hub_v2
 set_module_property DISPLAY_NAME            "Slow Control Hub v2"
-set_module_property VERSION                 26.3.0
+set_module_property VERSION                 26.4.0
 set_module_property DESCRIPTION             \
     "Modular slow-control hub with split-buffer architecture, linked-list \
      payload RAM, out-of-order dispatch, atomic RMW, release/acquire ordering \
