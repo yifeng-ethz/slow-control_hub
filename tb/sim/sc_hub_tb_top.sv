@@ -38,6 +38,15 @@ module sc_hub_tb_top;
   logic        avm_readdatavalid;
   logic [8:0]  avm_burstcount;
 
+  logic [4:0]  avs_csr_address;
+  logic        avs_csr_read;
+  logic        avs_csr_write;
+  logic [31:0] avs_csr_writedata;
+  logic [31:0] avs_csr_readdata;
+  logic        avs_csr_readdatavalid;
+  logic        avs_csr_waitrequest;
+  logic        avs_csr_burstcount;
+
   logic [3:0]  axi_awid;
   logic [15:0] axi_awaddr;
   logic [7:0]  axi_awlen;
@@ -7699,6 +7708,11 @@ module sc_hub_tb_top;
     inject_decode_error = 1'b0;
     inject_rresp_err    = 1'b0;
     inject_bresp_err    = 1'b0;
+    avs_csr_address     = '0;
+    avs_csr_read        = 1'b0;
+    avs_csr_write       = 1'b0;
+    avs_csr_writedata   = '0;
+    avs_csr_burstcount  = 1'b0;
     repeat (8) @(posedge clk);
     rst = 1'b0;
   end
@@ -8011,7 +8025,15 @@ module sc_hub_tb_top;
     .avm_hub_writedata          (avm_writedata),
     .avm_hub_waitrequest        (avm_waitrequest),
     .avm_hub_readdatavalid      (avm_readdatavalid),
-    .avm_hub_burstcount         (avm_burstcount)
+    .avm_hub_burstcount         (avm_burstcount),
+    .avs_csr_address            (avs_csr_address),
+    .avs_csr_read               (avs_csr_read),
+    .avs_csr_write              (avs_csr_write),
+    .avs_csr_writedata          (avs_csr_writedata),
+    .avs_csr_readdata           (avs_csr_readdata),
+    .avs_csr_readdatavalid      (avs_csr_readdatavalid),
+    .avs_csr_waitrequest        (avs_csr_waitrequest),
+    .avs_csr_burstcount         (avs_csr_burstcount)
   );
 
   avmm_slave_bfm avmm_bfm_inst (
@@ -8105,6 +8127,7 @@ module sc_hub_tb_top;
 
   initial begin
     wait (!rst);
+    repeat (4) @(posedge clk);
     if (!$value$plusargs("TEST_NAME=%s", test_name)) begin
       test_name = "smoke_basic";
     end
