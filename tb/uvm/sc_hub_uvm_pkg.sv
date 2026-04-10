@@ -18,7 +18,7 @@ endinterface
 
 interface sc_hub_avmm_if(input logic clk);
   logic        rst;
-  logic [15:0] address;
+  logic [17:0] address;
   logic        read;
   logic [31:0] readdata;
   logic        writeresponsevalid;
@@ -36,7 +36,7 @@ endinterface
 interface sc_hub_axi4_if(input logic clk);
   logic        rst;
   logic [3:0]  awid;
-  logic [15:0] awaddr;
+  logic [17:0] awaddr;
   logic [7:0]  awlen;
   logic [2:0]  awsize;
   logic [1:0]  awburst;
@@ -53,7 +53,7 @@ interface sc_hub_axi4_if(input logic clk);
   logic        bvalid;
   logic        bready;
   logic [3:0]  arid;
-  logic [15:0] araddr;
+  logic [17:0] araddr;
   logic [7:0]  arlen;
   logic [2:0]  arsize;
   logic [1:0]  arburst;

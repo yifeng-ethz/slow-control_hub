@@ -27,18 +27,18 @@ package sc_hub_ref_model_pkg;
     return version_word;
   endfunction
 
-  function automatic bit is_internal_csr_addr(input logic [15:0] word_addr);
+  function automatic bit is_internal_csr_addr(input logic [17:0] word_addr);
     return (word_addr >= HUB_CSR_BASE_ADDR_CONST) &&
            (word_addr < (HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WINDOW_WORDS_CONST));
   endfunction
 
-  function automatic logic [31:0] predict_csr_read_word(input logic [15:0] word_addr);
-    logic [15:0] offset;
+  function automatic logic [31:0] predict_csr_read_word(input logic [17:0] word_addr);
+    logic [17:0] offset;
 
     offset = word_addr - HUB_CSR_BASE_ADDR_CONST;
     case (offset)
-      16'h0000: return HUB_ID_CONST;
-      16'h0001: return pack_version_word(
+      18'h0000: return HUB_ID_CONST;
+      18'h0001: return pack_version_word(
                   HUB_VERSION_YY_CONST,
                   HUB_VERSION_MAJOR_CONST,
                   HUB_VERSION_PRE_CONST,
@@ -51,7 +51,7 @@ package sc_hub_ref_model_pkg;
 
   function automatic sc_reply_t predict_read_reply(
     sc_cmd_t cmd,
-    logic [31:0] mem [0:65535]
+    logic [31:0] mem [0:262143]
   );
     sc_reply_t reply;
     reply = make_empty_reply();
@@ -60,10 +60,10 @@ package sc_hub_ref_model_pkg;
     reply.header_valid  = 1'b1;
     reply.payload_words = cmd.rw_length;
     for (int unsigned idx = 0; idx < cmd.rw_length && idx < 256; idx++) begin
-      if (is_internal_csr_addr((cmd.start_address[15:0] + idx) & 16'hFFFF)) begin
-        reply.payload[idx] = predict_csr_read_word((cmd.start_address[15:0] + idx) & 16'hFFFF);
+      if (is_internal_csr_addr((cmd.start_address[17:0] + idx) & 18'h3FFFF)) begin
+        reply.payload[idx] = predict_csr_read_word((cmd.start_address[17:0] + idx) & 18'h3FFFF);
       end else begin
-        reply.payload[idx] = mem[(cmd.start_address[15:0] + idx) & 16'hFFFF];
+        reply.payload[idx] = mem[(cmd.start_address[17:0] + idx) & 18'h3FFFF];
       end
     end
     return reply;

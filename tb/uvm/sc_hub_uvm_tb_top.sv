@@ -188,36 +188,36 @@ module sc_hub_uvm_tb_top;
     end else if (profile_upper == "UNIFORM4_50") begin
       avmm_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 47));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 47));
       end
     end else if (profile_upper == "UNIFORM4_20") begin
       avmm_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 17));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 17));
       end
     end else if (profile_upper == "UNIFORM4_200") begin
       avmm_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 197));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 197));
       end
     end else if (profile_upper == "BIMODAL4_40") begin
       avmm_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], (addr[0] == 1'b0) ? 4 : 40);
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], (addr[0] == 1'b0) ? 4 : 40);
       end
     end else if (profile_upper == "ADDRESSDEP") begin
       avmm_bfm_inst.set_default_rd_latency(20);
       for (int unsigned addr = 16'h0000; addr < 16'h0400; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 2);
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 2);
       end
       for (int unsigned addr = 16'h8000; addr < 16'h8800; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 9));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 9));
       end
       for (int unsigned addr = 16'hA000; addr < 16'hA800; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 8 + (addr % 13));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 8 + (addr % 13));
       end
       for (int unsigned addr = 16'hC000; addr < 16'hC200; addr++) begin
-        avmm_bfm_inst.set_rd_latency_for_addr(addr[15:0], 6 + (addr % 11));
+        avmm_bfm_inst.set_rd_latency_for_addr(addr[17:0], 6 + (addr % 11));
       end
     end
   endtask
@@ -243,36 +243,36 @@ module sc_hub_uvm_tb_top;
     end else if (profile_upper == "UNIFORM4_50") begin
       axi4_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 47));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 47));
       end
     end else if (profile_upper == "UNIFORM4_20") begin
       axi4_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 17));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 17));
       end
     end else if (profile_upper == "UNIFORM4_200") begin
       axi4_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 197));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 197));
       end
     end else if (profile_upper == "BIMODAL4_40") begin
       axi4_bfm_inst.set_default_rd_latency(4);
       for (int unsigned addr = 0; addr < 16'h10000; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], (addr[0] == 1'b0) ? 4 : 40);
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], (addr[0] == 1'b0) ? 4 : 40);
       end
     end else if (profile_upper == "ADDRESSDEP") begin
       axi4_bfm_inst.set_default_rd_latency(20);
       for (int unsigned addr = 16'h0000; addr < 16'h0400; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 2);
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 2);
       end
       for (int unsigned addr = 16'h8000; addr < 16'h8800; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 4 + (addr % 9));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 4 + (addr % 9));
       end
       for (int unsigned addr = 16'hA000; addr < 16'hA800; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 8 + (addr % 13));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 8 + (addr % 13));
       end
       for (int unsigned addr = 16'hC000; addr < 16'hC200; addr++) begin
-        axi4_bfm_inst.set_rd_latency_for_addr(addr[15:0], 6 + (addr % 11));
+        axi4_bfm_inst.set_rd_latency_for_addr(addr[17:0], 6 + (addr % 11));
       end
     end
   endtask

@@ -3,7 +3,7 @@ class sc_hub_bus_txn extends uvm_sequence_item;
 
   bit             is_read;
   bit             is_write;
-  logic [15:0]    address;
+  logic [17:0]    address;
   int unsigned    burst_length;
   bit             has_cmd_meta;
   bit             ordered;
@@ -110,7 +110,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       return;
     end
 
-    if (req_h.malformed || sc_hub_ref_model_pkg::is_internal_csr_addr(req_h.start_address[15:0])) begin
+    if (req_h.malformed || sc_hub_ref_model_pkg::is_internal_csr_addr(req_h.start_address[17:0])) begin
       return;
     end
 
@@ -130,7 +130,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
 
   function automatic sc_pkt_seq_item match_pending_cmd(
     input bit           is_write,
-    input logic [15:0]  address,
+    input logic [17:0]  address,
     input int unsigned  burst_length,
     output bit          matched,
     output bit          out_of_order
@@ -151,7 +151,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       end
 
       if ((pending_cmd_q[idx].is_write() == is_write) &&
-          (pending_cmd_q[idx].start_address[15:0] == address) &&
+          (pending_cmd_q[idx].start_address[17:0] == address) &&
           ((burst_length == 0) || (pending_cmd_q[idx].rw_length == burst_length))) begin
         matched     = 1'b1;
         matched_idx = idx;
