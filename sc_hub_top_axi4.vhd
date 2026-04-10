@@ -1,11 +1,10 @@
 -- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.3.1
--- Date    : 20260331
--- Change  : Decouple the RX packet handoff into the AXI4 core with a
---           registered single-entry stage instead of same-cycle ready
---           forwarding.
+-- Version : 26.5.0
+-- Date    : 20260411
+-- Change  : Standard CSR identity header (UID + META mux at words 0-1).
+--           Pass identity generics through to sc_hub_axi4_core.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -27,7 +26,16 @@ entity sc_hub_top_axi4 is
         OOO_SLOT_COUNT             : positive := 4;
         OUTSTANDING_INT_RESERVED   : positive := 2;
         RD_TIMEOUT_CYCLES          : positive := DEFAULT_RD_TIMEOUT_CONST;
-        WR_TIMEOUT_CYCLES          : positive := DEFAULT_WR_TIMEOUT_CONST
+        WR_TIMEOUT_CYCLES          : positive := DEFAULT_WR_TIMEOUT_CONST;
+        -- Identity generics (standard CSR header at words 0-1)
+        IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
+        VERSION_MAJOR              : natural := 26;
+        VERSION_MINOR              : natural := 5;
+        VERSION_PATCH              : natural := 0;
+        BUILD                      : natural := 16#0411#;
+        VERSION_DATE               : natural := 16#20260411#;
+        VERSION_GIT                : natural := 0;
+        INSTANCE_ID                : natural := 0
     );
     port(
         i_clk                       : in  std_logic;
@@ -238,7 +246,15 @@ begin
         ATOMIC_ENABLE_G            => ATOMIC_ENABLE,
         HUB_CAP_ENABLE_G           => HUB_CAP_ENABLE,
         OOO_SLOT_COUNT_G           => OOO_SLOT_COUNT,
-        OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED
+        OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED,
+        IP_UID_G                   => IP_UID,
+        VERSION_MAJOR_G            => VERSION_MAJOR,
+        VERSION_MINOR_G            => VERSION_MINOR,
+        VERSION_PATCH_G            => VERSION_PATCH,
+        BUILD_G                    => BUILD,
+        VERSION_DATE_G             => VERSION_DATE,
+        VERSION_GIT_G              => VERSION_GIT,
+        INSTANCE_ID_G              => INSTANCE_ID
     )
     port map(
         i_clk                    => i_clk,

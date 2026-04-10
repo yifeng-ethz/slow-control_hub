@@ -1,11 +1,10 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.4.1
--- Date    : 20260410
--- Change  : Widen avm_hub_address from 16 to 18 bits so the hub master
---           can reach Qsys slaves at addresses above 0xFFFF (e.g. 0x11000
---           onewire, 0x12000 max10_prog, 0x20000 mm_bridge, 0x3F010 mutrig).
+-- Version : 26.5.0
+-- Date    : 20260411
+-- Change  : Standard CSR identity header (UID + META mux at words 0-1).
+--           Pass identity generics through to sc_hub_core.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -30,7 +29,16 @@ entity sc_hub_top is
         RD_TIMEOUT_CYCLES          : positive := DEFAULT_RD_TIMEOUT_CONST;
         WR_TIMEOUT_CYCLES          : positive := DEFAULT_WR_TIMEOUT_CONST;
         OUTSTANDING_LIMIT          : positive := 8;
-        OUTSTANDING_INT_RESERVED   : natural := 2
+        OUTSTANDING_INT_RESERVED   : natural := 2;
+        -- Identity generics (standard CSR header at words 0-1)
+        IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
+        VERSION_MAJOR              : natural := 26;
+        VERSION_MINOR              : natural := 5;
+        VERSION_PATCH              : natural := 0;
+        BUILD                      : natural := 16#0411#;
+        VERSION_DATE               : natural := 16#20260411#;
+        VERSION_GIT                : natural := 0;
+        INSTANCE_ID                : natural := 0
     );
     port(
         i_clk                       : in  std_logic;
@@ -236,7 +244,15 @@ begin
         HUB_CAP_ENABLE_G           => HUB_CAP_ENABLE,
         BP_FIFO_DEPTH_G            => BP_FIFO_DEPTH,
         OUTSTANDING_LIMIT_G        => OUTSTANDING_LIMIT,
-        OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED
+        OUTSTANDING_INT_RESERVED_G => OUTSTANDING_INT_RESERVED,
+        IP_UID_G                   => IP_UID,
+        VERSION_MAJOR_G            => VERSION_MAJOR,
+        VERSION_MINOR_G            => VERSION_MINOR,
+        VERSION_PATCH_G            => VERSION_PATCH,
+        BUILD_G                    => BUILD,
+        VERSION_DATE_G             => VERSION_DATE,
+        VERSION_GIT_G              => VERSION_GIT,
+        INSTANCE_ID_G              => INSTANCE_ID
     )
     port map(
         i_clk                    => i_clk,
