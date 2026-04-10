@@ -117,7 +117,7 @@ proc add_avmm_master_interface {} {
         set_interface_property hub_master writeWaitTime 0
         set_interface_property hub_master ENABLED true
 
-        add_interface_port hub_master avm_hub_address address Output 16
+        add_interface_port hub_master avm_hub_address address Output 18
         add_interface_port hub_master avm_hub_read read Output 1
         add_interface_port hub_master avm_hub_readdata readdata Input 32
         add_interface_port hub_master avm_hub_writeresponsevalid writeresponsevalid Input 1
@@ -331,7 +331,7 @@ set_interface_property hub_master setupTime 0
 set_interface_property hub_master timingUnits Cycles
 set_interface_property hub_master writeWaitTime 0
 set_interface_property hub_master ENABLED true
-add_interface_port hub_master avm_hub_address address Output 16
+add_interface_port hub_master avm_hub_address address Output 18
 add_interface_port hub_master avm_hub_read read Output 1
 add_interface_port hub_master avm_hub_readdata readdata Input 32
 add_interface_port hub_master avm_hub_writeresponsevalid writeresponsevalid Input 1

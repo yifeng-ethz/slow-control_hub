@@ -61,7 +61,7 @@ entity sc_hub_core is
         i_tx_data_ready          : in  std_logic;
         o_bus_cmd_valid          : out std_logic;
         o_bus_cmd_is_read        : out std_logic;
-        o_bus_cmd_address        : out std_logic_vector(15 downto 0);
+        o_bus_cmd_address        : out std_logic_vector(17 downto 0);
         o_bus_cmd_length         : out std_logic_vector(15 downto 0);
         i_bus_cmd_ready          : in  std_logic;
         o_bus_wr_data_valid      : out std_logic;
@@ -161,7 +161,7 @@ architecture rtl of sc_hub_core is
     signal soft_reset_pulse          : std_logic := '0';
     signal bus_cmd_valid_pulse       : std_logic := '0';
     signal bus_cmd_is_read_reg       : std_logic := '0';
-    signal bus_cmd_address_reg       : std_logic_vector(15 downto 0) := (others => '0');
+    signal bus_cmd_address_reg       : std_logic_vector(17 downto 0) := (others => '0');
     signal bus_cmd_length_reg        : std_logic_vector(15 downto 0) := (others => '0');
     signal pending_pkt_mem           : pending_pkt_mem_t := (others => SC_PKT_INFO_RESET_CONST);
     signal pending_pkt_rd_ptr        : pending_queue_index_t := 0;
@@ -976,7 +976,7 @@ begin
                         response_reg_v        := SC_RSP_OK_CONST;
                         drain_remaining       <= unsigned(pkt_info_reg.rw_length);
                         bus_cmd_is_read_reg   <= '0';
-                        bus_cmd_address_reg   <= pkt_info_reg.start_address(15 downto 0);
+                        bus_cmd_address_reg   <= pkt_info_reg.start_address(17 downto 0);
                         bus_cmd_length_reg    <= pkt_info_reg.rw_length;
                         rd_fifo_clear         <= '1';
                         -- Pre-register CSR write offset (masks to 5 bits so the

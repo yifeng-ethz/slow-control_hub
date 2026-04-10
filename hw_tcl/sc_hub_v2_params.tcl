@@ -45,13 +45,13 @@ set_parameter_property BUS_TYPE DESCRIPTION \
 set_parameter_property BUS_TYPE HDL_PARAMETER false
 set_parameter_property BUS_TYPE ALLOWED_RANGES {"AVALON"}
 
-add_parameter ADDR_WIDTH NATURAL 16
+add_parameter ADDR_WIDTH NATURAL 18
 set_parameter_property ADDR_WIDTH DISPLAY_NAME "Address Width (bits)"
 set_parameter_property ADDR_WIDTH DESCRIPTION \
-    "Word address width. The current checked-in Platform Designer wrapper \
-     is fixed to the live 16-bit word-address boundary."
+    "Word address width. 18 bits covers 256K words, sufficient for the \
+     current Qsys slave map (highest address: 0x3F010)."
 set_parameter_property ADDR_WIDTH HDL_PARAMETER false
-set_parameter_property ADDR_WIDTH ALLOWED_RANGES {16}
+set_parameter_property ADDR_WIDTH ALLOWED_RANGES {16 17 18 19 20 21 22 23 24}
 
 add_parameter DATA_WIDTH NATURAL 32
 set_parameter_property DATA_WIDTH DISPLAY_NAME "Data Width (bits)"

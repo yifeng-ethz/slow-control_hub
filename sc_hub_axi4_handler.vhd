@@ -23,7 +23,7 @@ entity sc_hub_axi4_handler is
         i_cmd_valid         : in  std_logic;
         o_cmd_ready         : out std_logic;
         i_cmd_is_read       : in  std_logic;
-        i_cmd_address       : in  std_logic_vector(15 downto 0);
+        i_cmd_address       : in  std_logic_vector(17 downto 0);
         i_cmd_length        : in  std_logic_vector(15 downto 0);
         i_wr_data_valid     : in  std_logic;
         i_wr_data           : in  std_logic_vector(31 downto 0);
@@ -36,7 +36,7 @@ entity sc_hub_axi4_handler is
         o_busy              : out std_logic;
         o_timeout_pulse     : out std_logic;
         m_axi_awid          : out std_logic_vector(3 downto 0);
-        m_axi_awaddr        : out std_logic_vector(15 downto 0);
+        m_axi_awaddr        : out std_logic_vector(17 downto 0);
         m_axi_awlen         : out std_logic_vector(7 downto 0);
         m_axi_awsize        : out std_logic_vector(2 downto 0);
         m_axi_awburst       : out std_logic_vector(1 downto 0);
@@ -52,7 +52,7 @@ entity sc_hub_axi4_handler is
         m_axi_bvalid        : in  std_logic;
         m_axi_bready        : out std_logic;
         m_axi_arid          : out std_logic_vector(3 downto 0);
-        m_axi_araddr        : out std_logic_vector(15 downto 0);
+        m_axi_araddr        : out std_logic_vector(17 downto 0);
         m_axi_arlen         : out std_logic_vector(7 downto 0);
         m_axi_arsize        : out std_logic_vector(2 downto 0);
         m_axi_arburst       : out std_logic_vector(1 downto 0);
@@ -71,7 +71,7 @@ architecture rtl of sc_hub_axi4_handler is
     type axi_state_t is (IDLING, SEND_AR, READING_DATA, SEND_AW, WRITING_DATA, WAITING_B);
 
     signal axi_state           : axi_state_t := IDLING;
-    signal cmd_address_reg     : std_logic_vector(15 downto 0) := (others => '0');
+    signal cmd_address_reg     : std_logic_vector(17 downto 0) := (others => '0');
     signal cmd_length_reg      : unsigned(15 downto 0) := (others => '0');
     signal words_seen          : unsigned(15 downto 0) := (others => '0');
     signal timeout_counter     : natural range 0 to RD_TIMEOUT_CYCLES_G := 0;
