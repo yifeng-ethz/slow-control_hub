@@ -1,9 +1,9 @@
 -- File name: sc_hub_pkg.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.0
--- Date    : 20260331
--- Change  : Introduce the modular sc_hub v2 package, shared types, and CSR constants.
+-- Version : 26.5.0
+-- Date    : 20260411
+-- Change  : Standard CSR identity header (UID + META mux at words 0-1).
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -17,14 +17,9 @@ package sc_hub_pkg is
     constant SKIP_WORD_CONST                : std_logic_vector(31 downto 0) := x"000000BC";
     constant EMPTY_WORD40_CONST             : std_logic_vector(39 downto 0) := (others => '0');
     constant EMPTY_WORD32_CONST             : std_logic_vector(31 downto 0) := (others => '0');
-    constant HUB_ID_CONST                   : std_logic_vector(31 downto 0) := x"53480000";
+    constant HUB_UID_CONST                   : std_logic_vector(31 downto 0) := x"53434842"; -- ASCII "SCHB"
     constant HUB_CSR_BASE_ADDR_CONST        : natural := 16#FE80#;
     constant HUB_CSR_WINDOW_WORDS_CONST     : natural := 32;
-    constant HUB_VERSION_YY_CONST           : natural := 26;
-    constant HUB_VERSION_MAJOR_CONST        : natural := 2;
-    constant HUB_VERSION_PRE_CONST          : natural := 0;
-    constant HUB_VERSION_MONTH_CONST        : natural := 3;
-    constant HUB_VERSION_DAY_CONST          : natural := 31;
     constant MAX_BURST_WORDS_CONST          : natural := 256;
     constant DEFAULT_RD_TIMEOUT_CONST       : natural := 200;
     constant DEFAULT_WR_TIMEOUT_CONST       : natural := 200;
@@ -32,8 +27,8 @@ package sc_hub_pkg is
     constant DEFAULT_BP_FIFO_DEPTH_CONST    : natural := 512;
     constant DEFAULT_PKT_TIMEOUT_CONST      : natural := 64;
 
-    constant HUB_CSR_WO_ID_CONST            : natural := 16#000#;
-    constant HUB_CSR_WO_VERSION_CONST       : natural := 16#001#;
+    constant HUB_CSR_WO_UID_CONST            : natural := 16#000#;
+    constant HUB_CSR_WO_META_CONST          : natural := 16#001#;
     constant HUB_CSR_WO_CTRL_CONST          : natural := 16#002#;
     constant HUB_CSR_WO_STATUS_CONST        : natural := 16#003#;
     constant HUB_CSR_WO_ERR_FLAGS_CONST     : natural := 16#004#;

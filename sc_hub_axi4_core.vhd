@@ -1,11 +1,12 @@
 -- File name: sc_hub_axi4_core.vhd
 -- Author: OpenAI Codex
 -- =======================================
--- Version : 26.3.16
--- Date    : 20260404
--- Change  : Register the external-read payload-availability flag alongside
---           the payload RAM read so the TX data compare no longer drives the
---           packet-TX staging register directly.
+-- Version : 26.5.0
+-- Date    : 20260411
+-- Change  : Standard CSR identity header (UID + META mux at words 0-1).
+--           Identity generics: IP_UID_G, VERSION_MAJOR_G, VERSION_MINOR_G,
+--           VERSION_PATCH_G, BUILD_G, VERSION_DATE_G, VERSION_GIT_G,
+--           INSTANCE_ID_G.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -23,7 +24,16 @@ entity sc_hub_axi4_core is
         ATOMIC_ENABLE_G            : boolean := true;
         HUB_CAP_ENABLE_G           : boolean := true;
         OOO_SLOT_COUNT_G           : positive := 4;
-        OUTSTANDING_INT_RESERVED_G : positive := 2
+        OUTSTANDING_INT_RESERVED_G : positive := 2;
+        -- Identity generics (standard CSR header at words 0-1)
+        IP_UID_G                   : natural := 16#53434842#; -- ASCII "SCHB"
+        VERSION_MAJOR_G            : natural := 26;
+        VERSION_MINOR_G            : natural := 5;
+        VERSION_PATCH_G            : natural := 0;
+        BUILD_G                    : natural := 16#0411#;
+        VERSION_DATE_G             : natural := 16#20260411#;
+        VERSION_GIT_G              : natural := 0;
+        INSTANCE_ID_G              : natural := 0
     );
     port(
         i_clk                    : in  std_logic;
@@ -197,6 +207,7 @@ architecture rtl of sc_hub_axi4_core is
     signal atomic_write_data_reg   : std_logic_vector(31 downto 0) := (others => '0');
 
     signal hub_enable                : std_logic := '1';
+    signal meta_page_sel             : std_logic_vector(1 downto 0) := "00";
     signal hub_scratch               : std_logic_vector(31 downto 0) := (others => '0');
     signal hub_err_flags             : std_logic_vector(31 downto 0) := (others => '0');
     signal hub_err_count             : unsigned(31 downto 0) := (others => '0');
@@ -508,6 +519,8 @@ begin
         variable csr_word_v             : std_logic_vector(31 downto 0);
         variable status_word_v          : std_logic_vector(31 downto 0);
         variable fifo_status_word_v     : std_logic_vector(31 downto 0);
+        variable version_local_v        : std_logic_vector(31 downto 0);
+        variable meta_local_v           : std_logic_vector(31 downto 0);
         variable offset_v               : natural;
         variable bus_tag_v              : natural;
         variable done_words_v           : unsigned(15 downto 0);
@@ -616,6 +629,7 @@ begin
                 atomic_read_data_reg      <= (others => '0');
                 atomic_write_data_reg     <= (others => '0');
                 hub_enable                <= '1';
+                meta_page_sel             <= "00";
                 hub_scratch               <= (others => '0');
                 hub_err_flags             <= (others => '0');
                 hub_err_count             <= (others => '0');
@@ -797,6 +811,12 @@ begin
 
                     when WR_INT_COMMIT =>
                         case write_csr_offset is
+                            when HUB_CSR_WO_UID_CONST =>
+                                null; -- UID is read-only
+
+                            when HUB_CSR_WO_META_CONST =>
+                                meta_page_sel <= write_csr_word(1 downto 0);
+
                             when HUB_CSR_WO_CTRL_CONST =>
                                 hub_enable <= write_csr_word(0);
                                 if (write_csr_word(1) = '1' or write_csr_word(2) = '1') then
@@ -986,17 +1006,25 @@ begin
 
                     offset_v   := int_fill_csr_offset;
                     csr_word_v := (others => '0');
+
+                    -- Pre-compute META read-mux value
+                    version_local_v               := (others => '0');
+                    version_local_v(31 downto 24) := std_logic_vector(to_unsigned(VERSION_MAJOR_G, 8));
+                    version_local_v(23 downto 16) := std_logic_vector(to_unsigned(VERSION_MINOR_G, 8));
+                    version_local_v(15 downto 12) := std_logic_vector(to_unsigned(VERSION_PATCH_G, 4));
+                    version_local_v(11 downto 0)  := std_logic_vector(to_unsigned(BUILD_G, 12));
+                    case meta_page_sel is
+                        when "00"   => meta_local_v := version_local_v;
+                        when "01"   => meta_local_v := std_logic_vector(to_unsigned(VERSION_DATE_G, 32));
+                        when "10"   => meta_local_v := std_logic_vector(to_unsigned(VERSION_GIT_G, 32));
+                        when others => meta_local_v := std_logic_vector(to_unsigned(INSTANCE_ID_G, 32));
+                    end case;
+
                     case offset_v is
-                        when HUB_CSR_WO_ID_CONST =>
-                            csr_word_v := HUB_ID_CONST;
-                        when HUB_CSR_WO_VERSION_CONST =>
-                            csr_word_v := pack_version_func(
-                                HUB_VERSION_YY_CONST,
-                                HUB_VERSION_MAJOR_CONST,
-                                HUB_VERSION_PRE_CONST,
-                                HUB_VERSION_MONTH_CONST,
-                                HUB_VERSION_DAY_CONST
-                            );
+                        when HUB_CSR_WO_UID_CONST =>
+                            csr_word_v := std_logic_vector(to_unsigned(IP_UID_G, 32));
+                        when HUB_CSR_WO_META_CONST =>
+                            csr_word_v := meta_local_v;
                         when HUB_CSR_WO_CTRL_CONST =>
                             csr_word_v(0) := hub_enable;
                         when HUB_CSR_WO_STATUS_CONST =>
@@ -1542,6 +1570,7 @@ begin
                     atomic_read_data_reg      <= (others => '0');
                     atomic_write_data_reg     <= (others => '0');
                     hub_enable                <= '1';
+                    meta_page_sel             <= "00";
                     hub_scratch               <= (others => '0');
                     hub_err_flags             <= (others => '0');
                     hub_err_count             <= (others => '0');
