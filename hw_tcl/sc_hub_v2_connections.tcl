@@ -105,10 +105,9 @@ proc sc_hub_v2_build_csr_slave {} {
 }
 
 proc sc_hub_v2_build_avmm_master {} {
-    # The checked-in AVMM top currently has a fixed 16-bit word address and a
-    # 9-bit burstcount. Keep the PD boundary aligned to the live RTL instead of
-    # the wider planned parameter set.
-    set aw 16
+    # Widened to 18 bits to reach slaves at addresses above 0xFFFF (e.g. 0x3F010).
+    # SC protocol carries 24-bit addresses; 18 bits covers the current Qsys map.
+    set aw 18
     set bcw 9
 
     add_interface hub avalon start
@@ -145,8 +144,8 @@ proc sc_hub_v2_build_avmm_master {} {
 }
 
 proc sc_hub_v2_build_axi4_master {} {
-    # The checked-in AXI4 top has fixed widths and no lock/user sideband yet.
-    set aw 16
+    # Widened to 18 bits to match Avalon master port width.
+    set aw 18
     set idw 4
 
     add_interface hub axi4 start

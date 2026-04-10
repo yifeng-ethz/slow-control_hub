@@ -60,7 +60,7 @@ module sc_hub_assertions (
   ,
   input logic        avm_read,
   input logic        avm_write,
-  input logic [15:0] avm_address,
+  input logic [17:0] avm_address,
   input logic [31:0] avm_writedata,
   input logic        avm_waitrequest,
   input logic [1:0]  avm_response,

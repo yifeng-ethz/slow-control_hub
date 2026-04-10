@@ -1,11 +1,11 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.3.2
--- Date    : 20260409
--- Change  : Register soft_reset_pulse to break combinational path from
---           pkt_rx output into core ext_write_diag_data_hold enable chain.
---           Standalone critical path was -0.071 ns at 171.9 MHz.
+-- Version : 26.4.1
+-- Date    : 20260410
+-- Change  : Widen avm_hub_address from 16 to 18 bits so the hub master
+--           can reach Qsys slaves at addresses above 0xFFFF (e.g. 0x11000
+--           onewire, 0x12000 max10_prog, 0x20000 mm_bridge, 0x3F010 mutrig).
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -43,7 +43,7 @@ entity sc_hub_top is
         aso_upload_ready            : in  std_logic;
         aso_upload_startofpacket    : out std_logic;
         aso_upload_endofpacket      : out std_logic;
-        avm_hub_address             : out std_logic_vector(15 downto 0);
+        avm_hub_address             : out std_logic_vector(17 downto 0);
         avm_hub_read                : out std_logic;
         avm_hub_readdata            : in  std_logic_vector(31 downto 0);
         avm_hub_writeresponsevalid  : in  std_logic;
@@ -103,7 +103,7 @@ architecture rtl of sc_hub_top is
     signal tx_data_ready           : std_logic;
     signal bus_cmd_valid           : std_logic;
     signal bus_cmd_is_read         : std_logic;
-    signal bus_cmd_address         : std_logic_vector(15 downto 0);
+    signal bus_cmd_address         : std_logic_vector(17 downto 0);
     signal bus_cmd_length          : std_logic_vector(15 downto 0);
     signal bus_cmd_ready           : std_logic;
     signal bus_wr_data_valid       : std_logic;

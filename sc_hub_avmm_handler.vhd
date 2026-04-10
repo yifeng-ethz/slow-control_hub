@@ -26,7 +26,7 @@ entity sc_hub_avmm_handler is
         i_cmd_valid         : in  std_logic;
         o_cmd_ready         : out std_logic;
         i_cmd_is_read       : in  std_logic;
-        i_cmd_address       : in  std_logic_vector(15 downto 0);
+        i_cmd_address       : in  std_logic_vector(17 downto 0);
         i_cmd_length        : in  std_logic_vector(15 downto 0);
         i_wr_data_valid     : in  std_logic;
         i_wr_data           : in  std_logic_vector(31 downto 0);
@@ -38,7 +38,7 @@ entity sc_hub_avmm_handler is
         o_response          : out std_logic_vector(1 downto 0);
         o_busy              : out std_logic;
         o_timeout_pulse     : out std_logic;
-        avm_hub_address      : out std_logic_vector(15 downto 0);
+        avm_hub_address      : out std_logic_vector(17 downto 0);
         avm_hub_read         : out std_logic;
         avm_hub_readdata     : in  std_logic_vector(31 downto 0);
         avm_hub_writeresponsevalid : in  std_logic;
@@ -70,7 +70,7 @@ architecture rtl of sc_hub_avmm_handler is
     subtype timeout_counter_t is natural range 0 to TIMEOUT_COUNTER_MAX_C;
 
     signal avmm_state          : avmm_state_t := IDLING;
-    signal cmd_address_reg     : std_logic_vector(15 downto 0) := (others => '0');
+    signal cmd_address_reg     : std_logic_vector(17 downto 0) := (others => '0');
     signal cmd_length_reg      : unsigned(15 downto 0) := (others => '0');
     signal words_seen          : unsigned(15 downto 0) := (others => '0');
     signal timeout_counter     : timeout_counter_t := 0;

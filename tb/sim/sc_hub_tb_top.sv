@@ -27,7 +27,7 @@ module sc_hub_tb_top;
   logic        uplink_sop;
   logic        uplink_eop;
 
-  logic [15:0] avm_address;
+  logic [17:0] avm_address;
   logic        avm_read;
   logic [31:0] avm_readdata;
   logic        avm_writeresponsevalid;

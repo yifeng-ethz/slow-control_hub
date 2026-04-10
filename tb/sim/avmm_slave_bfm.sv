@@ -1,11 +1,11 @@
 module avmm_slave_bfm #(
-  parameter int MEM_DEPTH  = 65536,
+  parameter int MEM_DEPTH  = 262144,
   parameter int RD_LATENCY = 1,
   parameter int WR_LATENCY = 1
 ) (
   input  logic        clk,
   input  logic        rst,
-  input  logic [15:0] avm_address,
+  input  logic [17:0] avm_address,
   input  logic        avm_read,
   output logic [31:0] avm_readdata,
   output logic        avm_writeresponsevalid,
@@ -23,11 +23,11 @@ module avmm_slave_bfm #(
   int unsigned rd_delay;
   int unsigned wr_delay;
   logic        read_active;
-  logic [15:0] rd_addr_reg;
+  logic [17:0] rd_addr_reg;
   int unsigned rd_beats_remaining;
   logic        write_active;
   logic        write_rsp_pending;
-  logic [15:0] wr_addr_reg;
+  logic [17:0] wr_addr_reg;
   int unsigned wr_beats_remaining;
   int unsigned rd_latency_cfg;
   int unsigned rd_latency_override[0:MEM_DEPTH-1];
