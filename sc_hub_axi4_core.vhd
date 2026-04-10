@@ -58,7 +58,7 @@ entity sc_hub_axi4_core is
         i_tx_data_ready          : in  std_logic;
         o_bus_ooo_enable         : out std_logic;
         o_bus_rd_cmd_valid       : out std_logic;
-        o_bus_rd_cmd_address     : out std_logic_vector(15 downto 0);
+        o_bus_rd_cmd_address     : out std_logic_vector(17 downto 0);
         o_bus_rd_cmd_length      : out std_logic_vector(15 downto 0);
         o_bus_rd_cmd_tag         : out std_logic_vector(3 downto 0);
         o_bus_rd_cmd_lock        : out std_logic;
@@ -71,7 +71,7 @@ entity sc_hub_axi4_core is
         i_bus_rd_response        : in  std_logic_vector(1 downto 0);
         i_bus_rd_timeout_pulse   : in  std_logic;
         o_bus_wr_cmd_valid       : out std_logic;
-        o_bus_wr_cmd_address     : out std_logic_vector(15 downto 0);
+        o_bus_wr_cmd_address     : out std_logic_vector(17 downto 0);
         o_bus_wr_cmd_length      : out std_logic_vector(15 downto 0);
         o_bus_wr_cmd_lock        : out std_logic;
         i_bus_wr_cmd_ready       : in  std_logic;
@@ -232,7 +232,7 @@ architecture rtl of sc_hub_axi4_core is
     ) return boolean is
         variable addr_v : natural;
     begin
-        addr_v := to_integer(unsigned(pkt_info.start_address(15 downto 0)));
+        addr_v := to_integer(unsigned(pkt_info.start_address(17 downto 0)));
         return (addr_v >= HUB_CSR_BASE_ADDR_CONST and addr_v < HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WINDOW_WORDS_CONST);
     end function internal_hit_func;
 
@@ -314,9 +314,9 @@ begin
         else '0';
 
     o_bus_rd_cmd_valid  <= '1' when (write_state = WR_ATOMIC_RD_WAIT_CMD) else rd_cmd_pending_live;
-    o_bus_rd_cmd_address <= write_pkt_info.start_address(15 downto 0)
+    o_bus_rd_cmd_address <= write_pkt_info.start_address(17 downto 0)
         when (write_state = WR_ATOMIC_RD_WAIT_CMD)
-        else ext_slot_pkt_info(rd_cmd_pending_slot).start_address(15 downto 0);
+        else ext_slot_pkt_info(rd_cmd_pending_slot).start_address(17 downto 0);
     o_bus_rd_cmd_length  <= std_logic_vector(to_unsigned(1, o_bus_rd_cmd_length'length))
         when (write_state = WR_ATOMIC_RD_WAIT_CMD)
         else ext_slot_pkt_info(rd_cmd_pending_slot).rw_length;
@@ -329,7 +329,7 @@ begin
     o_bus_wr_cmd_valid   <= '1'
         when (write_state = WR_EXT_WAIT_CMD or write_state = WR_ATOMIC_WR_WAIT_CMD)
         else '0';
-    o_bus_wr_cmd_address <= write_pkt_info.start_address(15 downto 0);
+    o_bus_wr_cmd_address <= write_pkt_info.start_address(17 downto 0);
     o_bus_wr_cmd_length  <= write_pkt_info.rw_length;
     o_bus_wr_cmd_lock    <= write_pkt_info.atomic_flag;
     o_bus_wr_data_valid  <= '1'
@@ -733,7 +733,7 @@ begin
                         ext_slot_payload_wr_en(bus_tag_v)   <= '1';
                         ext_slot_payload_wr_addr(bus_tag_v) <= to_integer(ext_slot_words_received(bus_tag_v)(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0));
                         ext_slot_payload_wr_data(bus_tag_v) <= i_bus_rd_data;
-                        next_read_addr_v := resize(unsigned(ext_slot_pkt_info(bus_tag_v).start_address(15 downto 0)), 32) +
+                        next_read_addr_v := resize(unsigned(ext_slot_pkt_info(bus_tag_v).start_address(17 downto 0)), 32) +
                                             resize(ext_slot_words_received(bus_tag_v), 32);
                         last_ext_read_addr   <= std_logic_vector(next_read_addr_v);
                         last_ext_read_data   <= i_bus_rd_data;
@@ -843,7 +843,7 @@ begin
 
                     when WR_EXT_RUNNING =>
                         if (i_bus_wr_data_ready = '1' and i_wr_data_empty = '0') then
-                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32) +
+                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(17 downto 0)), 32) +
                                                                      resize(write_stream_index, 32));
                             last_ext_write_data  <= i_wr_data_q;
                             ext_word_write_count <= wrap_inc32_func(ext_word_write_count);
@@ -876,7 +876,7 @@ begin
                     when WR_ATOMIC_RD_WAIT_DATA =>
                         if (i_bus_rd_data_valid = '1') then
                             atomic_read_data_reg <= i_bus_rd_data;
-                            last_ext_read_addr   <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32));
+                            last_ext_read_addr   <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(17 downto 0)), 32));
                             last_ext_read_data   <= i_bus_rd_data;
                             ext_word_read_count  <= wrap_inc32_func(ext_word_read_count);
                         end if;
@@ -915,7 +915,7 @@ begin
 
                     when WR_ATOMIC_WR_RUNNING =>
                         if (i_bus_wr_data_ready = '1') then
-                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(15 downto 0)), 32) +
+                            last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(17 downto 0)), 32) +
                                                                      resize(write_stream_index, 32));
                             last_ext_write_data  <= atomic_write_data_reg;
                             ext_word_write_count <= wrap_inc32_func(ext_word_write_count);

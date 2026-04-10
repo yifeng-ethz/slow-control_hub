@@ -1,5 +1,5 @@
 module axi4_slave_bfm #(
-  parameter int MEM_DEPTH         = 65536,
+  parameter int MEM_DEPTH         = 262144,
   parameter int RD_LATENCY        = 1,
   parameter int WR_LATENCY        = 1,
   parameter int RD_QUEUE_DEPTH    = 16
@@ -7,7 +7,7 @@ module axi4_slave_bfm #(
   input  logic        clk,
   input  logic        rst,
   input  logic [3:0]  awid,
-  input  logic [15:0] awaddr,
+  input  logic [17:0] awaddr,
   input  logic [7:0]  awlen,
   input  logic [2:0]  awsize,
   input  logic [1:0]  awburst,
@@ -24,7 +24,7 @@ module axi4_slave_bfm #(
   output logic        bvalid,
   input  logic        bready,
   input  logic [3:0]  arid,
-  input  logic [15:0] araddr,
+  input  logic [17:0] araddr,
   input  logic [7:0]  arlen,
   input  logic [2:0]  arsize,
   input  logic [1:0]  arburst,
@@ -47,7 +47,7 @@ module axi4_slave_bfm #(
     bit         valid;
     bit         ready;
     logic [3:0] id;
-    logic [15:0] addr;
+    logic [17:0] addr;
     logic [8:0] beats_remaining;
     int unsigned delay_remaining;
     int unsigned order;
@@ -55,7 +55,7 @@ module axi4_slave_bfm #(
   } rd_req_t;
 
   logic [31:0] mem [0:MEM_DEPTH-1];
-  logic [15:0] wr_addr_reg;
+  logic [17:0] wr_addr_reg;
   int unsigned wr_delay;
   bit          wr_resp_pending;
   logic [3:0]  wr_resp_id;
@@ -66,7 +66,7 @@ module axi4_slave_bfm #(
   rd_req_t     rd_pending [0:RD_QUEUE_DEPTH-1];
   bit          rd_stream_active;
   logic [3:0]  rd_stream_id;
-  logic [15:0] rd_stream_addr;
+  logic [17:0] rd_stream_addr;
   logic [8:0]  rd_stream_beats_remaining;
   int unsigned rd_order_counter;
   int unsigned rd_ready_counter;
@@ -103,7 +103,7 @@ module axi4_slave_bfm #(
   endtask
 
   task automatic set_rd_latency_for_addr(
-    input logic [15:0] addr,
+    input logic [17:0] addr,
     input int unsigned latency
   );
     rd_latency_override[addr % MEM_DEPTH] = latency;

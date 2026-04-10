@@ -41,7 +41,7 @@ entity sc_hub_top_axi4 is
         aso_upload_startofpacket    : out std_logic;
         aso_upload_endofpacket      : out std_logic;
         m_axi_awid                  : out std_logic_vector(3 downto 0);
-        m_axi_awaddr                : out std_logic_vector(15 downto 0);
+        m_axi_awaddr                : out std_logic_vector(17 downto 0);
         m_axi_awlen                 : out std_logic_vector(7 downto 0);
         m_axi_awsize                : out std_logic_vector(2 downto 0);
         m_axi_awburst               : out std_logic_vector(1 downto 0);
@@ -58,7 +58,7 @@ entity sc_hub_top_axi4 is
         m_axi_bvalid                : in  std_logic;
         m_axi_bready                : out std_logic;
         m_axi_arid                  : out std_logic_vector(3 downto 0);
-        m_axi_araddr                : out std_logic_vector(15 downto 0);
+        m_axi_araddr                : out std_logic_vector(17 downto 0);
         m_axi_arlen                 : out std_logic_vector(7 downto 0);
         m_axi_arsize                : out std_logic_vector(2 downto 0);
         m_axi_arburst               : out std_logic_vector(1 downto 0);
@@ -110,7 +110,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal tx_data_ready           : std_logic;
     signal bus_ooo_enable          : std_logic;
     signal bus_rd_cmd_valid        : std_logic;
-    signal bus_rd_cmd_address      : std_logic_vector(15 downto 0);
+    signal bus_rd_cmd_address      : std_logic_vector(17 downto 0);
     signal bus_rd_cmd_length       : std_logic_vector(15 downto 0);
     signal bus_rd_cmd_tag          : std_logic_vector(3 downto 0);
     signal bus_rd_cmd_lock         : std_logic;
@@ -123,7 +123,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_wr_data             : std_logic_vector(31 downto 0);
     signal bus_wr_data_ready       : std_logic;
     signal bus_wr_cmd_valid        : std_logic;
-    signal bus_wr_cmd_address      : std_logic_vector(15 downto 0);
+    signal bus_wr_cmd_address      : std_logic_vector(17 downto 0);
     signal bus_wr_cmd_length       : std_logic_vector(15 downto 0);
     signal bus_wr_cmd_lock         : std_logic;
     signal bus_wr_cmd_ready        : std_logic;

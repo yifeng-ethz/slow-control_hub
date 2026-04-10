@@ -40,7 +40,7 @@ module avmm_slave_bfm #(
   endtask
 
   task automatic set_rd_latency_for_addr(
-    input logic [15:0] addr,
+    input logic [17:0] addr,
     input int unsigned latency
   );
     rd_latency_override[addr] = latency;

@@ -48,7 +48,7 @@ module sc_hub_tb_top;
   logic        avs_csr_burstcount;
 
   logic [3:0]  axi_awid;
-  logic [15:0] axi_awaddr;
+  logic [17:0] axi_awaddr;
   logic [7:0]  axi_awlen;
   logic [2:0]  axi_awsize;
   logic [1:0]  axi_awburst;
@@ -65,7 +65,7 @@ module sc_hub_tb_top;
   logic        axi_bvalid;
   logic        axi_bready;
   logic [3:0]  axi_arid;
-  logic [15:0] axi_araddr;
+  logic [17:0] axi_araddr;
   logic [7:0]  axi_arlen;
   logic [2:0]  axi_arsize;
   logic [1:0]  axi_arburst;
@@ -111,7 +111,7 @@ module sc_hub_tb_top;
   logic [1:0] axi_last_rresp;
   logic       axi_w_before_aw_violation;
   logic [3:0] axi_arid_log[$];
-  logic [15:0] axi_araddr_log[$];
+  logic [17:0] axi_araddr_log[$];
   logic [3:0] axi_rid_log[$];
 `endif
 
@@ -588,18 +588,18 @@ module sc_hub_tb_top;
   );
     for (int unsigned idx = 0; idx < expected_words.size(); idx++) begin
 `ifdef SC_HUB_BUS_AXI4
-      if (axi4_bfm_inst.mem[(start_address + idx) & 16'hFFFF] !== expected_words[idx]) begin
-        $error("sc_hub_tb_top: AXI4 mem[0x%04h] mismatch exp=0x%08h act=0x%08h",
-               (start_address + idx) & 16'hFFFF,
+      if (axi4_bfm_inst.mem[(start_address + idx) & 18'h3FFFF] !== expected_words[idx]) begin
+        $error("sc_hub_tb_top: AXI4 mem[0x%05h] mismatch exp=0x%08h act=0x%08h",
+               (start_address + idx) & 18'h3FFFF,
                expected_words[idx],
-               axi4_bfm_inst.mem[(start_address + idx) & 16'hFFFF]);
+               axi4_bfm_inst.mem[(start_address + idx) & 18'h3FFFF]);
       end
 `else
-      if (avmm_bfm_inst.mem[(start_address + idx) & 16'hFFFF] !== expected_words[idx]) begin
-        $error("sc_hub_tb_top: AVMM mem[0x%04h] mismatch exp=0x%08h act=0x%08h",
-               (start_address + idx) & 16'hFFFF,
+      if (avmm_bfm_inst.mem[(start_address + idx) & 18'h3FFFF] !== expected_words[idx]) begin
+        $error("sc_hub_tb_top: AVMM mem[0x%05h] mismatch exp=0x%08h act=0x%08h",
+               (start_address + idx) & 18'h3FFFF,
                expected_words[idx],
-               avmm_bfm_inst.mem[(start_address + idx) & 16'hFFFF]);
+               avmm_bfm_inst.mem[(start_address + idx) & 18'h3FFFF]);
       end
 `endif
     end
@@ -613,9 +613,9 @@ module sc_hub_tb_top;
     observed_words.delete();
     for (int unsigned idx = 0; idx < word_count; idx++) begin
 `ifdef SC_HUB_BUS_AXI4
-      observed_words.push_back(axi4_bfm_inst.mem[(start_address + idx) & 16'hFFFF]);
+      observed_words.push_back(axi4_bfm_inst.mem[(start_address + idx) & 18'h3FFFF]);
 `else
-      observed_words.push_back(avmm_bfm_inst.mem[(start_address + idx) & 16'hFFFF]);
+      observed_words.push_back(avmm_bfm_inst.mem[(start_address + idx) & 18'h3FFFF]);
 `endif
     end
   endtask
@@ -678,7 +678,7 @@ module sc_hub_tb_top;
     input logic [23:0] start_address,
     input int unsigned latency
   );
-    axi4_bfm_inst.set_rd_latency_for_addr(start_address[15:0], latency);
+    axi4_bfm_inst.set_rd_latency_for_addr(start_address[17:0], latency);
   endtask
 
   task automatic set_axi4_wr_latency(
@@ -737,7 +737,7 @@ module sc_hub_tb_top;
     input logic [23:0] start_address,
     input int unsigned latency
   );
-    avmm_bfm_inst.set_rd_latency_for_addr(start_address[15:0], latency);
+    avmm_bfm_inst.set_rd_latency_for_addr(start_address[17:0], latency);
   endtask
 
   task automatic set_avmm_wr_latency(
@@ -2614,7 +2614,7 @@ module sc_hub_tb_top;
         end
         seen_write[write_idx] = 1'b1;
         expect_write_reply(replies[idx], 24'h001280 + write_idx * 4, 1);
-        if (axi4_bfm_inst.mem[(24'h001280 + write_idx * 4) & 16'hFFFF] !== 32'hD212_0000 + write_idx) begin
+        if (axi4_bfm_inst.mem[(24'h001280 + write_idx * 4) & 18'h3FFFF] !== 32'hD212_0000 + write_idx) begin
           $error("sc_hub_tb_top: T212 write payload mismatch addr=0x%06h", 24'h001280 + write_idx * 4);
         end
       end else begin
@@ -3892,9 +3892,9 @@ module sc_hub_tb_top;
     logic [31:0] expected_word;
 
 `ifdef SC_HUB_BUS_AXI4
-    expected_word = axi4_bfm_inst.mem[16'h1234];
+    expected_word = axi4_bfm_inst.mem[18'h31234];
 `else
-    expected_word = avmm_bfm_inst.mem[16'h1234];
+    expected_word = avmm_bfm_inst.mem[18'h31234];
 `endif
 
     driver_inst.send_read(24'hFF1234, 1);
@@ -4842,14 +4842,14 @@ module sc_hub_tb_top;
 
     avmm_bfm_inst.set_default_rd_latency(1);
     for (int unsigned idx = 0; idx < 8; idx++) begin
-      avmm_bfm_inst.set_rd_latency_for_addr(addr_list[idx][15:0], lat_list[idx]);
+      avmm_bfm_inst.set_rd_latency_for_addr(addr_list[idx][17:0], lat_list[idx]);
       driver_inst.send_read(addr_list[idx], 1);
     end
 
     for (int unsigned idx = 0; idx < 8; idx++) begin
       monitor_inst.wait_reply(reply_queue_item);
       expect_read_reply(reply_queue_item, addr_list[idx], 1);
-      avmm_bfm_inst.set_rd_latency_for_addr(addr_list[idx][15:0], 1);
+      avmm_bfm_inst.set_rd_latency_for_addr(addr_list[idx][17:0], 1);
     end
   endtask
 

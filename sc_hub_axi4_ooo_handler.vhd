@@ -27,7 +27,7 @@ entity sc_hub_axi4_ooo_handler is
         i_ooo_enable        : in  std_logic;
         i_rd_cmd_valid      : in  std_logic;
         o_rd_cmd_ready      : out std_logic;
-        i_rd_cmd_address    : in  std_logic_vector(15 downto 0);
+        i_rd_cmd_address    : in  std_logic_vector(17 downto 0);
         i_rd_cmd_length     : in  std_logic_vector(15 downto 0);
         i_rd_cmd_tag        : in  std_logic_vector(3 downto 0);
         i_rd_cmd_lock       : in  std_logic;
@@ -40,7 +40,7 @@ entity sc_hub_axi4_ooo_handler is
         o_rd_timeout_pulse  : out std_logic;
         i_wr_cmd_valid      : in  std_logic;
         o_wr_cmd_ready      : out std_logic;
-        i_wr_cmd_address    : in  std_logic_vector(15 downto 0);
+        i_wr_cmd_address    : in  std_logic_vector(17 downto 0);
         i_wr_cmd_length     : in  std_logic_vector(15 downto 0);
         i_wr_cmd_lock       : in  std_logic;
         i_wr_data_valid     : in  std_logic;
@@ -51,7 +51,7 @@ entity sc_hub_axi4_ooo_handler is
         o_wr_timeout_pulse  : out std_logic;
         o_busy              : out std_logic;
         m_axi_awid          : out std_logic_vector(3 downto 0);
-        m_axi_awaddr        : out std_logic_vector(15 downto 0);
+        m_axi_awaddr        : out std_logic_vector(17 downto 0);
         m_axi_awlen         : out std_logic_vector(7 downto 0);
         m_axi_awsize        : out std_logic_vector(2 downto 0);
         m_axi_awburst       : out std_logic_vector(1 downto 0);
@@ -68,7 +68,7 @@ entity sc_hub_axi4_ooo_handler is
         m_axi_bvalid        : in  std_logic;
         m_axi_bready        : out std_logic;
         m_axi_arid          : out std_logic_vector(3 downto 0);
-        m_axi_araddr        : out std_logic_vector(15 downto 0);
+        m_axi_araddr        : out std_logic_vector(17 downto 0);
         m_axi_arlen         : out std_logic_vector(7 downto 0);
         m_axi_arsize        : out std_logic_vector(2 downto 0);
         m_axi_arburst       : out std_logic_vector(1 downto 0);
@@ -92,7 +92,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     type bool_array_t is array (natural range <>) of boolean;
 
     signal ar_pending_valid      : std_logic := '0';
-    signal ar_pending_address    : std_logic_vector(15 downto 0) := (others => '0');
+    signal ar_pending_address    : std_logic_vector(17 downto 0) := (others => '0');
     signal ar_pending_length     : unsigned(15 downto 0) := (others => '0');
     signal ar_pending_tag        : std_logic_vector(3 downto 0) := (others => '0');
     signal ar_pending_lock       : std_logic := '0';
@@ -109,7 +109,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal rd_timeout_pulse      : std_logic := '0';
 
     signal wr_state              : wr_state_t := WR_IDLE;
-    signal wr_address_reg        : std_logic_vector(15 downto 0) := (others => '0');
+    signal wr_address_reg        : std_logic_vector(17 downto 0) := (others => '0');
     signal wr_length_reg         : unsigned(15 downto 0) := (others => '0');
     signal wr_words_seen         : unsigned(15 downto 0) := (others => '0');
     signal wr_timeout_counter    : natural range 0 to WR_TIMEOUT_CYCLES_G := 0;
