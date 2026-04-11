@@ -11,3 +11,5 @@ syn/quartus/incremental_db/
 syn/quartus/output_files/
 syn/quartus/*.qws
 syn/quartus/a5_pin_model_dump.txt
+tb/sim_runs/
+tb/work*/
