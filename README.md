@@ -13,6 +13,8 @@ emits packetized replies on the uplink.
 - [Protocol note](doc/PROTOCOL.md)
 - [Software mismatch note](doc/SOFTWARE_MISMATCH.md)
 - [Host API standard](doc/SC_HOST_API_STANDARD.md)
+- [Verification signoff](doc/VERIFICATION_SIGNOFF.md)
+- [Synthesis signoff](doc/SYNTHESIS_SIGNOFF.md)
 - [Changelog](doc/CHANGELOG.md)
 - [RTL plan](doc/RTL_PLAN.md)
 - [Verification README](tb/README.md)
