@@ -7,7 +7,7 @@ returns reply packets on the uplink.
 
 **Version:** 26.5.0.0411
 **Module name:** `sc_hub_top` (Avalon-MM), `sc_hub_top_axi4` (AXI4)
-**Platform Designer group:** Mu3e Slow Control
+**Platform Designer group:** Mu3e Control Plane/Modules
 
 ---
 
@@ -87,19 +87,24 @@ Typical deployment on a SciFi FEB:
 
 | Top-level entity | Bus protocol | OoO support |
 |------------------|-------------|-------------|
-| `sc_hub_top` | Avalon-MM | In-order only (compile-time `OOO_ENABLE=false`) |
+| `sc_hub_top` | Avalon-MM | External bus completion remains ordered. `OOO_ENABLE` can still be compiled in, but Avalon-MM itself does not provide true out-of-order completion. |
 | `sc_hub_top_axi4` | AXI4 | Out-of-order via tagged slots (`OOO_SLOT_COUNT` slots) |
 
 ### Backpressure FIFO
 
-When `BACKPRESSURE = true` (default), the hub queues reply packets in a
-store-and-forward FIFO (`sc_hub_fifo_bp`).  The FIFO depth (`BP_FIFO_DEPTH`,
-default 512 words) absorbs uplink stalls.  When the FIFO is half-full, the hub
-stops accepting new download packets to prevent overflow.
+The current v2 datapath always uses the internal reply FIFO
+(`sc_hub_fifo_bp`). The FIFO depth (`BP_FIFO_DEPTH`, default 512 words)
+absorbs uplink stalls.
 
-When `SCHEDULER_USE_PKT_TRANSFER = true` (default), the hub asserts
-`aso_upload_valid` only after the entire reply packet is in the FIFO, removing
-inter-word bubbles on the uplink.
+`BACKPRESSURE` is now a compatibility-facing admission-control knob rather than
+"enable or disable the FIFO". When `BACKPRESSURE = true` (default), the hub
+stops accepting new download packets once the uplink FIFO reaches the half-full
+threshold. When `BACKPRESSURE = false`, the FIFO still exists, but this
+half-full throttling is disabled.
+
+`SCHEDULER_USE_PKT_TRANSFER` is also retained for compatibility with older
+generated systems. The current v2 reply path still emits fully packetized
+replies from the internal FIFO regardless of this generic.
 
 ### Ordering and Atomics
 
@@ -126,19 +131,19 @@ header (shared across all Mu3e IP cores).
 |------|------|--------|-------------|
 | 0x00 | UID | RO | IP identifier: ASCII "SCHB" = 0x53434842 (immutable) |
 | 0x01 | META | RW/RO | Write: sets page selector `[1:0]`. Read: returns selected page (0=VERSION, 1=DATE, 2=GIT, 3=INSTANCE_ID) |
-| 0x02 | CTRL | RW | `[0]` enable, `[1]` diag_clear (W1C), `[2]` soft_reset (W1S) |
+| 0x02 | CTRL | RW | Bits 0=enable, 1=diag_clear, 2=soft_reset. Writing bit1 or bit2 clears sticky diagnostics and counters; bit2 also requests a local soft reset pulse. |
 | 0x03 | STATUS | RO | `[0]` busy, `[1]` error, `[2]` dl_fifo_full, `[3]` bp_full, `[4]` enable, `[5]` bus_busy |
 | 0x04 | ERR_FLAGS | RW1C | `[0]` up_overflow, `[1]` down_overflow, `[2]` int_addr_err, `[3]` rd_timeout, `[4]` pkt_drop, `[5]` slverr, `[6]` decerr |
 | 0x05 | ERR_COUNT | RO | Saturating 32-bit error event counter |
 | 0x06 | SCRATCH | RW | General-purpose scratch register |
 | 0x07 | GTS_SNAP_LO | RO | Global timestamp snapshot `[31:0]` |
 | 0x08 | GTS_SNAP_HI | RO | Global timestamp snapshot `[47:32]` (reading triggers new snapshot) |
-| 0x09 | FIFO_CFG | RW | `[0]` backpressure_on (RO), `[1]` store_forward |
+| 0x09 | FIFO_CFG | RW | `[0]` backpressure_on readback (fixed `1` in v2), `[1]` store_forward |
 | 0x0A | FIFO_STATUS | RO | `[0]` dl_full, `[1]` bp_full, `[2]` dl_overflow, `[3]` bp_overflow, `[4]` rd_fifo_full, `[5]` rd_fifo_empty |
-| 0x0B | DOWN_PKT_CNT | RO | `[0]` packets-in-progress (non-idle) |
-| 0x0C | UP_PKT_CNT | RO | `[9:0]` backpressure FIFO packet count |
-| 0x0D | DOWN_USEDW | RO | `[9:0]` download FIFO used words |
-| 0x0E | UP_USEDW | RO | `[9:0]` backpressure FIFO used words |
+| 0x0B | DOWN_PKT_CNT | RO | `[0]` download-packet occupancy summary bit. `1` means the hub is non-idle or still has deferred work; this is not an accumulated packet counter. |
+| 0x0C | UP_PKT_CNT | RO | Current reply-packet count in the backpressure FIFO. With the default depth 512 this is a 10-bit field. |
+| 0x0D | DOWN_USEDW | RO | Current used-word count of the download payload FIFO. With the default depth 256 this is a 10-bit field. |
+| 0x0E | UP_USEDW | RO | Current used-word count of the backpressure FIFO. With the default depth 512 this is a 10-bit field. |
 | 0x0F | EXT_PKT_RD | RO | External read packet counter (saturating) |
 | 0x10 | EXT_PKT_WR | RO | External write packet counter (saturating) |
 | 0x11 | EXT_WORD_RD | RO | External read word counter (saturating) |
@@ -152,6 +157,7 @@ header (shared across all Mu3e IP cores).
 | 0x19 | ORD_DRAIN_CNT | RO | Ordered-mode drain event counter |
 | 0x1A | ORD_HOLD_CNT | RO | Ordered-mode hold event counter |
 | 0x1B | DBG_DROP_DETAIL | RO | Debug: last dropped packet detail |
+| 0x1C-0x1E | RESERVED | RO | Unimplemented slots. Reads return slave error / debug fill value depending on access path. |
 | 0x1F | HUB_CAP | RO | Capability bits: `[0]` OoO, `[1]` ordering, `[2]` atomic, `[3]` identity |
 
 ### META Page Encoding (Word 0x01)
@@ -195,8 +201,8 @@ Word 2..N: read payload data (for read replies)
 
 | Generic | Type | Default | Description |
 |---------|------|---------|-------------|
-| BACKPRESSURE | boolean | true | Enable backpressure FIFO on uplink |
-| SCHEDULER_USE_PKT_TRANSFER | boolean | true | Store-and-forward mode for reply packets |
+| BACKPRESSURE | boolean | true | Compatibility generic that controls half-full admission throttling. The v2 datapath always keeps the reply FIFO instantiated. |
+| SCHEDULER_USE_PKT_TRANSFER | boolean | true | Compatibility generic retained in the entity for legacy generated systems. |
 | INVERT_RD_SIG | boolean | true | Invert polarity of upload ready signal |
 | DEBUG | natural | 1 | Debug level (0=off, 1=synth, 2=sim) |
 | OOO_ENABLE | boolean | false | Compile-time out-of-order support |
@@ -275,7 +281,7 @@ make run TEST=sc_hub_smoke_test
 
 ```bash
 cd syn/quartus/
-quartus_sh --flow compile sc_hub_tiles_minimal_top
+quartus_sh --flow compile sc_hub_minimal_live -c sc_hub_minimal_live
 ```
 
 ---
