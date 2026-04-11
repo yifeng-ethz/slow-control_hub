@@ -1,298 +1,204 @@
 # Slow Control Hub Mu3E IP
 
-8B10B slow-control packet bridge with Avalon-MM/AXI4 master, backpressure FIFO,
-and ordered/atomic transaction support.  Translates Mu3e SC packets arriving on
-the 8B10B downlink into Avalon Memory-Mapped (or AXI4) bus transactions and
-returns reply packets on the uplink.
+8B10B slow-control bridge for Mu3e front-end boards. The hub accepts SC packets
+from the SWB downlink, executes Avalon-MM or AXI4 transactions on the FEB, and
+emits packetized replies on the uplink.
 
-**Version:** 26.5.0.0411
-**Module name:** `sc_hub_top` (Avalon-MM), `sc_hub_top_axi4` (AXI4)
+**Version:** 26.6.1.0411
+**RTL tops:** `rtl/sc_hub_top.vhd` (Avalon-MM), `rtl/sc_hub_top_axi4.vhd` (AXI4)
 **Platform Designer group:** Mu3e Control Plane/Modules
 
----
+## Entry Points
 
-## Use Case
-
-The Mu3e front-end boards (FEBs) receive slow-control command packets from the
-Switching Board (SWB) over an 8B10B serial link.  Each command carries a target
-address, read/write type, burst length, and optional ordering/atomic constraints.
-The SC Hub IP is instantiated on every FEB to:
-
-1. **Decode** incoming SC packets (header, payload, K-character framing).
-2. **Translate** the packet into one or more Avalon-MM (or AXI4) bus
-   transactions directed at downstream peripherals (MuTRiG configurators,
-   OneWire controllers, MAX10 programming interfaces, etc.).
-3. **Collect** read data or write responses and assemble a reply packet.
-4. **Transmit** the reply packet upstream through the backpressure FIFO.
-
-Typical deployment on a SciFi FEB:
-
-- **Register access:** single-word reads/writes to MuTRiG slow-control
-  registers via the Qsys interconnect.
-- **Burst programming:** multi-word writes to configure ASICs or reprogram
-  the MAX10 flash.
-- **Diagnostics:** read the hub's own CSR window (address `0xFE80..0xFE9F`)
-  for FIFO status, error flags, and packet counters.
-- **Ordered transactions:** enforce acquire/release ordering across domains
-  when coordinating multi-ASIC calibration sequences.
-
----
+- [Protocol note](doc/PROTOCOL.md)
+- [Software mismatch note](doc/SOFTWARE_MISMATCH.md)
+- [Host API standard](doc/SC_HOST_API_STANDARD.md)
+- [Changelog](doc/CHANGELOG.md)
+- [RTL plan](doc/RTL_PLAN.md)
+- [Verification README](tb/README.md)
+- [Verification plan](tb/DV_PLAN.md)
 
 ## Architecture
 
-```
-                        +-----------+
-  i_download_data  ---->| pkt_rx    |
-  i_download_datak ---->|           |
-                        |  header   |
-                        |  decode + |---> pkt_info + wr_data FIFO
-                        |  payload  |
-                        |  FIFO     |
-                        +-----------+
-                              |
-                     +--------v--------+
-                     |                  |
-                     |    core FSM      |<--- avs_csr (host CSR)
-                     |                  |
-                     | dispatch, fill,  |
-                     | stream, pad,     |
-                     | reply, atomic    |
-                     |                  |
-                     +---+---------+----+
-                         |         |
-              +----------v--+  +---v-----------+
-              | avmm_handler|  | pkt_tx        |
-              | (or axi4_   |  | (reply        |
-              |  handler +  |  |  assembly +   |
-              |  ooo_handler)|  |  BP FIFO)    |
-              +------+------+  +-------+-------+
-                     |                 |
-              avm_hub_*          aso_upload_*
-              (Avalon-MM /       (Avalon-ST
-               AXI4 master)       uplink)
+```text
+SWB SC downlink
+  -> rtl/sc_hub_pkt_rx.vhd
+  -> rtl/sc_hub_core.vhd or rtl/sc_hub_axi4_core.vhd
+  -> rtl/sc_hub_avmm_handler.vhd / rtl/sc_hub_axi4_handler.vhd / rtl/sc_hub_axi4_ooo_handler.vhd
+  -> rtl/sc_hub_pkt_tx.vhd
+  -> SWB SC uplink
 ```
 
-### Pipeline Overview
+The internal CSR window lives at `0xFE80..0xFE9F` and never leaves the hub.
+External accesses are translated to Avalon-MM or AXI4 bus transactions.
 
-| Stage | Component | Description |
-|-------|-----------|-------------|
-| 1 | `sc_hub_pkt_rx` | K-character framing, header decode, payload FIFO (depth configurable) |
-| 2 | `sc_hub_core` | Main FSM: dispatch internal/external, fill read FIFO, stream write data, pad short replies, arm TX |
-| 3 | `sc_hub_avmm_handler` | Avalon-MM burst master with read/write timeout |
-| 3a | `sc_hub_axi4_handler` | AXI4 burst master (alternative to AVMM) |
-| 3b | `sc_hub_axi4_ooo_handler` | Out-of-order AXI4 completion tracker |
-| 4 | `sc_hub_pkt_tx` | Reply packet assembly, backpressure FIFO (store-and-forward or cut-through) |
+## Packet Contract
 
-### Bus Variants
+The Mu3e Spec Book chapter 4.7 figures remain the authoritative base framing:
 
-| Top-level entity | Bus protocol | OoO support |
-|------------------|-------------|-------------|
-| `sc_hub_top` | Avalon-MM | External bus completion remains ordered. `OOO_ENABLE` can still be compiled in, but Avalon-MM itself does not provide true out-of-order completion. |
-| `sc_hub_top_axi4` | AXI4 | Out-of-order via tagged slots (`OOO_SLOT_COUNT` slots) |
+- Command figure: [doc/pictures/sc_packet_cmd.png](doc/pictures/sc_packet_cmd.png)
+- Reply figure: [doc/pictures/sc_packet_ack.png](doc/pictures/sc_packet_ack.png)
 
-### Backpressure FIFO
+`sc_hub v2` keeps the base framing words but reuses only reserved bits for
+ordering, atomic, and error metadata.
 
-The current v2 datapath always uses the internal reply FIFO
-(`sc_hub_fifo_bp`). The FIFO depth (`BP_FIFO_DEPTH`, default 512 words)
-absorbs uplink stalls.
+### Supported command types
 
-`BACKPRESSURE` is now a compatibility-facing admission-control knob rather than
-"enable or disable the FIFO". When `BACKPRESSURE = true` (default), the hub
-stops accepting new download packets once the uplink FIFO reaches the half-full
-threshold. When `BACKPRESSURE = false`, the FIFO still exists, but this
-half-full throttling is disabled.
+- `SC=00`: incrementing read
+- `SC=01`: incrementing write
+- `SC=10`: nonincrementing read
+- `SC=11`: nonincrementing write
 
-`SCHEDULER_USE_PKT_TRANSFER` is also retained for compatibility with older
-generated systems. The current v2 reply path still emits fully packetized
-replies from the internal FIFO regardless of this generic.
+### Detector-class and reply masks
 
-### Ordering and Atomics
+The base-spec `M/S/T/R` semantics are implemented in RTL.
 
-When `ORD_ENABLE = true`, the hub respects the per-packet ordering mode
-(relaxed, release, acquire) and domain/epoch/scope fields.  Acquire-mode
-packets hold the pipeline until all prior packets in the same domain have
-drained.
+- `R=1`: execute locally but suppress the reply packet
+- `M=1`: MuPix FEBs ignore the packet
+- `S=1`: SciFi FEBs ignore the packet
+- `T=1`: Tile FEBs ignore the packet
 
-When `ATOMIC_ENABLE = true`, the hub supports read-modify-write atomic
-operations: it reads the target word, applies a bitwise mask and data
-modification, and writes back the result -- all within a single packet
-transaction that blocks the pipeline.
+The local detector class is selected by CSR word `0x1C FEB_TYPE`:
 
----
+- `00`: ALL / unknown local class
+- `01`: MuPix
+- `10`: SciFi
+- `11`: Tile
 
-## CSR Register Map
+Important: `FEB_TYPE=ALL` is conservative. If any of `M/S/T` is set while the
+local type is still `ALL`, the hub ignores the packet. To target all FEB types,
+leave `M/S/T` clear.
 
-All registers are word-addressed through the `csr` Avalon-MM slave (5-bit
-address, read latency 1).  The CSR window occupies addresses `0xFE80..0xFE9F`
-(32 words) in the SC address space.  Words 0-1 form the standard identity
-header (shared across all Mu3e IP cores).
+### v2 overlay relative to the base figure
 
-| Word | Name | Access | Description |
-|------|------|--------|-------------|
-| 0x00 | UID | RO | IP identifier: ASCII "SCHB" = 0x53434842 (immutable) |
-| 0x01 | META | RW/RO | Write: sets page selector `[1:0]`. Read: returns selected page (0=VERSION, 1=DATE, 2=GIT, 3=INSTANCE_ID) |
-| 0x02 | CTRL | RW | Bits 0=enable, 1=diag_clear, 2=soft_reset. Writing bit1 or bit2 clears sticky diagnostics and counters; bit2 also requests a local soft reset pulse. |
-| 0x03 | STATUS | RO | `[0]` busy, `[1]` error, `[2]` dl_fifo_full, `[3]` bp_full, `[4]` enable, `[5]` bus_busy |
-| 0x04 | ERR_FLAGS | RW1C | `[0]` up_overflow, `[1]` down_overflow, `[2]` int_addr_err, `[3]` rd_timeout, `[4]` pkt_drop, `[5]` slverr, `[6]` decerr |
-| 0x05 | ERR_COUNT | RO | Saturating 32-bit error event counter |
-| 0x06 | SCRATCH | RW | General-purpose scratch register |
-| 0x07 | GTS_SNAP_LO | RO | Global timestamp snapshot `[31:0]` |
-| 0x08 | GTS_SNAP_HI | RO | Global timestamp snapshot `[47:32]` (reading triggers new snapshot) |
-| 0x09 | FIFO_CFG | RW | `[0]` backpressure_on readback (fixed `1` in v2), `[1]` store_forward |
-| 0x0A | FIFO_STATUS | RO | `[0]` dl_full, `[1]` bp_full, `[2]` dl_overflow, `[3]` bp_overflow, `[4]` rd_fifo_full, `[5]` rd_fifo_empty |
-| 0x0B | DOWN_PKT_CNT | RO | `[0]` download-packet occupancy summary bit. `1` means the hub is non-idle or still has deferred work; this is not an accumulated packet counter. |
-| 0x0C | UP_PKT_CNT | RO | Current reply-packet count in the backpressure FIFO. With the default depth 512 this is a 10-bit field. |
-| 0x0D | DOWN_USEDW | RO | Current used-word count of the download payload FIFO. With the default depth 256 this is a 10-bit field. |
-| 0x0E | UP_USEDW | RO | Current used-word count of the backpressure FIFO. With the default depth 512 this is a 10-bit field. |
-| 0x0F | EXT_PKT_RD | RO | External read packet counter (saturating) |
-| 0x10 | EXT_PKT_WR | RO | External write packet counter (saturating) |
-| 0x11 | EXT_WORD_RD | RO | External read word counter (saturating) |
-| 0x12 | EXT_WORD_WR | RO | External write word counter (saturating) |
-| 0x13 | LAST_RD_ADDR | RO | Last external read address |
-| 0x14 | LAST_RD_DATA | RO | Last external read data |
-| 0x15 | LAST_WR_ADDR | RO | Last external write address |
-| 0x16 | LAST_WR_DATA | RO | Last external write data |
-| 0x17 | PKT_DROP_CNT | RO | `[15:0]` dropped-packet counter |
-| 0x18 | OOO_CTRL | RW | `[0]` runtime OoO enable (only effective when `OOO_ENABLE=true` at compile time) |
-| 0x19 | ORD_DRAIN_CNT | RO | Ordered-mode drain event counter |
-| 0x1A | ORD_HOLD_CNT | RO | Ordered-mode hold event counter |
-| 0x1B | DBG_DROP_DETAIL | RO | Debug: last dropped packet detail |
-| 0x1C-0x1E | RESERVED | RO | Unimplemented slots. Reads return slave error / debug fill value depending on access path. |
-| 0x1F | HUB_CAP | RO | Capability bits: `[0]` OoO, `[1]` ordering, `[2]` atomic, `[3]` identity |
+Command word 1 in current RTL is:
 
-### META Page Encoding (Word 0x01)
+- `[31:30]` `order_mode`
+- `[29]` reserved `0`
+- `[28]` `atomic_flag`
+- `[27:24]` `M/S/T/R`
+- `[23:0]` `start_address`
 
-| Page (`[1:0]`) | Content |
-|----------------|---------|
-| 0 | VERSION: `[31:24]` major, `[23:16]` minor, `[15:12]` patch, `[11:0]` build |
-| 1 | DATE: build date as 32-bit integer (e.g. `0x20260411`) |
-| 2 | GIT: short git hash as 32-bit integer |
-| 3 | INSTANCE_ID: per-instance identifier set by Platform Designer |
+Command word 2 in current RTL is:
 
----
+- `[31:28]` `order_domain`
+- `[27:20]` `order_epoch`
+- `[19:18]` `order_scope`
+- `[17:16]` reserved in commands
+- `[15:0]` `rw_length`
 
-## SC Packet Format
+Reply word 2 in current RTL is:
 
-### Command Packet (SWB -> FEB)
+- `[31:28]` `order_domain`
+- `[27:20]` `order_epoch`
+- `[19:18]` `response` (`00=OK`, `10=SLVERR`, `11=DECERR`)
+- `[17]` reserved `0`
+- `[16]` spec-book acknowledge marker, always `1` on replies
+- `[15:0]` echoed request length
 
-```
-Word 0: [31:30] type  [29:14] fpga_id  [13:0] start_address[23:10]
-Word 1: [31:22] start_address[9:0]  [21:18] mask  [17:2] rw_length  [1:0] order_mode
-Word 2: [31:28] order_domain  [27:20] order_epoch  [19:18] order_scope  [17] atomic_flag  ...
-Word 3..N: write payload data (for write commands)
-```
+Compatibility note: successful non-atomic write replies still echo the original
+request length in the header but carry no payload, exactly as shown by the spec
+figure. The distinguishers are packet type plus the reply acknowledge marker on
+bit `16`, not “payload words equals echoed length”.
 
-### Reply Packet (FEB -> SWB)
+### Nonincrementing support
 
-```
-Word 0: [31:30] type  [29:14] fpga_id  [13:0] start_address[23:10]
-Word 1: [31:22] start_address[9:0]  [21:18] mask  [17:2] rw_length  [1:0] response
-Word 2..N: read payload data (for read replies)
-```
+Nonincrementing commands are implemented and verified on both bus variants.
 
-![SC Packet CMD](./pictures/sc_packet_cmd.png "SC Packet Command")
-![SC Packet ACK](./pictures/sc_ack_mod.png "SC Packet Reply")
+- `rtl/sc_hub_avmm_handler.vhd` keeps the word address fixed across the burst
+- `rtl/sc_hub_axi4_ooo_handler.vhd` drives `AWBURST/ARBURST = FIXED`
+- The directed/UVM regressions include nonincrementing traffic in both AVMM and AXI4 flows
 
----
+## Internal CSR Window
 
-## Generics
+The hub-owned CSR words are:
 
-### sc_hub_top (Avalon-MM variant)
+| Word | Name | Access | Meaning |
+|------|------|--------|---------|
+| `0x00` | `UID` | RO | Immutable Mu3e IP identifier, default `0x53434842` (`"SCHB"`) |
+| `0x01` | `META` | RW/RO | Page selector on write, selected page on read (`VERSION`, `DATE`, `GIT`, `INSTANCE_ID`) |
+| `0x02` | `CTRL` | RW | Enable, diag clear, soft reset |
+| `0x03` | `STATUS` | RO | Busy/error summary and FIFO/bus state |
+| `0x04` | `ERR_FLAGS` | RW1C | Sticky overflow, timeout, packet-drop, and bus-error flags |
+| `0x05` | `ERR_COUNT` | RO | Saturating error counter |
+| `0x06` | `SCRATCH` | RW | Software scratch register |
+| `0x07` | `GTS_SNAP_LO` | RO | Timestamp snapshot low |
+| `0x08` | `GTS_SNAP_HI` | RO | Timestamp snapshot high; reading captures a fresh snapshot |
+| `0x09` | `FIFO_CFG` | RO | FIFO configuration summary |
+| `0x0A` | `FIFO_STATUS` | RO | FIFO state summary |
+| `0x0B` | `DOWN_PKT_CNT` | RO | Download packet occupancy summary bit |
+| `0x0C` | `UP_PKT_CNT` | RO | Reply FIFO packet count |
+| `0x0D` | `DOWN_USEDW` | RO | Download FIFO used words |
+| `0x0E` | `UP_USEDW` | RO | Reply FIFO used words |
+| `0x0F` | `EXT_PKT_RD` | RO | External read packet counter |
+| `0x10` | `EXT_PKT_WR` | RO | External write packet counter |
+| `0x11` | `EXT_WORD_RD` | RO | External read word counter |
+| `0x12` | `EXT_WORD_WR` | RO | External write word counter |
+| `0x13` | `LAST_RD_ADDR` | RO | Last external read address |
+| `0x14` | `LAST_RD_DATA` | RO | Last external read data |
+| `0x15` | `LAST_WR_ADDR` | RO | Last external write address |
+| `0x16` | `LAST_WR_DATA` | RO | Last external write data |
+| `0x17` | `PKT_DROP_CNT` | RO | Packet drop counter |
+| `0x18` | `OOO_CTRL` | RW | AXI4 OoO enable shadow |
+| `0x19` | `ORD_DRAIN_CNT` | RO | Ordering drain counter |
+| `0x1A` | `ORD_HOLD_CNT` | RO | Ordering hold counter |
+| `0x1B` | `DBG_DROP_DETAIL` | RO | Last packet-drop reason detail |
+| `0x1C` | `FEB_TYPE` | RW | Local FEB class used by `M/S/T` masking |
+| `0x1F` | `HUB_CAP` | RO | Capability summary word |
 
-| Generic | Type | Default | Description |
-|---------|------|---------|-------------|
-| BACKPRESSURE | boolean | true | Compatibility generic that controls half-full admission throttling. The v2 datapath always keeps the reply FIFO instantiated. |
-| SCHEDULER_USE_PKT_TRANSFER | boolean | true | Compatibility generic retained in the entity for legacy generated systems. |
-| INVERT_RD_SIG | boolean | true | Invert polarity of upload ready signal |
-| DEBUG | natural | 1 | Debug level (0=off, 1=synth, 2=sim) |
-| OOO_ENABLE | boolean | false | Compile-time out-of-order support |
-| ORD_ENABLE | boolean | true | Compile-time ordering support |
-| ATOMIC_ENABLE | boolean | true | Compile-time atomic transaction support |
-| HUB_CAP_ENABLE | boolean | true | Enable capability register |
-| EXT_PLD_DEPTH | positive | 256 | Download payload FIFO depth |
-| PKT_QUEUE_DEPTH | positive | 16 | Packet queue depth in RX |
-| BP_FIFO_DEPTH | positive | 512 | Backpressure FIFO depth |
-| RD_TIMEOUT_CYCLES | positive | 200 | Read timeout in clock cycles |
-| WR_TIMEOUT_CYCLES | positive | 200 | Write timeout in clock cycles |
-| OUTSTANDING_LIMIT | positive | 8 | Max outstanding packets |
-| OUTSTANDING_INT_RESERVED | natural | 2 | Internal-address reserved slots |
-| IP_UID | natural | 0x53434842 | UID word (ASCII "SCHB") |
-| VERSION_MAJOR | natural | 26 | Version major |
-| VERSION_MINOR | natural | 5 | Version minor |
-| VERSION_PATCH | natural | 0 | Version patch |
-| BUILD | natural | 0x0411 | Build stamp |
-| VERSION_DATE | natural | 0x20260411 | Build date |
-| VERSION_GIT | natural | 0 | Git short hash |
-| INSTANCE_ID | natural | 0 | Per-instance ID set by Platform Designer |
+## Software Notes
 
----
+Mainline `online_sc` command emission already supports the base nonincrementing
+SC types, and its reply detector can trust bit `16` again. The remaining
+software mismatches are:
 
-## Directory Structure
+- `FEBSlowcontrolInterface::FEB_write(..., MSTR_bar, ...)` ORs raw bits into
+  command word 1. Mainline MIDAS FE paths pass `MSTR_bar=0`, but any caller that
+  uses legacy base-spec mask bit positions must be updated for the v2 overlay.
+- `FEBSlowcontrolInterface` still rejects `startaddr >= 2^16` and parses reply
+  start address as `uint16_t`, while the protocol and RTL use a 24-bit start
+  address field.
+- `FEBSlowcontrolInterface` still caps host chunking at `255` words even though
+  the SC protocol length field and SWB `SC_MAIN_LENGTH_REGISTER_W` are both
+  16-bit wide.
+- `online_sc` host code treats the reply marker as a yes/no bit only. It does
+  not surface the v2 extended response code carried in reserved bits `[19:18]`.
 
-```
+## Repository Layout
+
+```text
 slow-control_hub/
-  sc_hub_top.vhd                -- Avalon-MM top-level entity
-  sc_hub_top_axi4.vhd           -- AXI4 top-level entity
-  sc_hub_core.vhd               -- Core FSM (Avalon-MM variant)
-  sc_hub_axi4_core.vhd          -- Core FSM (AXI4 variant)
-  sc_hub_pkg.vhd                -- Shared types, constants, functions
-  sc_hub_pkt_rx.vhd             -- Packet receiver (header decode + payload FIFO)
-  sc_hub_pkt_tx.vhd             -- Packet transmitter (reply assembly + BP FIFO)
-  sc_hub_avmm_handler.vhd       -- Avalon-MM burst master with timeout
-  sc_hub_axi4_handler.vhd       -- AXI4 burst master
-  sc_hub_axi4_ooo_handler.vhd   -- AXI4 out-of-order completion tracker
-  sc_hub_payload_ram.vhd        -- Payload storage RAM
-  fifo/                          -- FIFO primitives
-    sc_hub_fifo_sf.vhd           -- Store-and-forward FIFO
-    sc_hub_fifo_sc.vhd           -- SC FIFO
-    sc_hub_fifo_bp.vhd           -- Backpressure FIFO
-  sc_hub_hw.tcl                  -- Platform Designer component descriptor (v1)
-  sc_hub_v2_hw.tcl               -- Platform Designer component descriptor (v2)
-  syn/quartus/                   -- Standalone synthesis signoff project
-  tb/                            -- Testbench (standalone + UVM)
-    Makefile                     -- Quick standalone simulation
-    sim/                         -- Standalone test scripts
-    uvm/                         -- Full UVM environment
-  legacy/                        -- Archived prior versions
-  pictures/                      -- SC packet format diagrams
+  doc/        protocol, plans, changelog, figures
+  rtl/        active VHDL sources
+  tb/         directed + UVM verification harness
+  syn/        standalone Quartus sign-off projects
+  hw_tcl/     Platform Designer packaging helpers
+  tlm/        transaction-level modeling support
+  legacy/     archived historical sources
 ```
-
----
 
 ## Quick Start
 
-### Standalone Simulation
+### Directed simulation
 
 ```bash
-cd tb/
-make compile          # compile DUT + testbench
-make run TEST=t222    # run a specific test
+cd tb
+make compile_sim WORK=work_dir BUS_TYPE=AXI4
+make run_sim_smoke WORK=work_dir BUS_TYPE=AXI4 TEST_NAME=T129
+make run_sim_smoke WORK=work_dir BUS_TYPE=AXI4 TEST_NAME=T130
 ```
 
-### UVM Simulation
+### UVM regression
 
 ```bash
-cd tb/uvm/
-make compile
-make run TEST=sc_hub_smoke_test
+cd tb
+make compile_uvm WORK=work_uvm BUS_TYPE=AXI4
+./scripts/run_uvm_case.sh T341 T356 T357
 ```
 
-### Standalone Synthesis Signoff
+### Standalone timing sign-off
 
 ```bash
-cd syn/quartus/
+cd syn/quartus
 quartus_sh --flow compile sc_hub_minimal_live -c sc_hub_minimal_live
 ```
-
----
-
-## Version History
-
-| Version | Date | Change |
-|---------|------|--------|
-| 26.5.0.0411 | 2026-04-11 | Standard CSR identity header (UID + META mux at words 0-1); identity generics |
-| 26.4.1.0410 | 2026-04-10 | Widen avm_hub_address from 16 to 18 bits |
-| 26.3.5.0411 | 2026-04-11 | Core FSM: same-ready RX handoff, same-cycle final-beat padding, strict head-of-line dispatch |
-| 26.3.1.0331 | 2026-03-31 | AXI4 top: registered single-entry RX stage |
-| 26.2.0.0331 | 2026-03-31 | Refactored into separate files (core, top, pkt_rx, pkt_tx, handler) |
-| 2.7.11 | legacy | Original monolithic sc_hub.vhd |
