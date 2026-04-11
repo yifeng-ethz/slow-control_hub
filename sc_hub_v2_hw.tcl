@@ -28,8 +28,8 @@ package require -exact qsys 16.1
 # ----------------------------------------------------------------------------
 
 set_module_property NAME                    sc_hub_v2
-set_module_property DISPLAY_NAME            "Slow Control Hub v2"
-set_module_property VERSION                 26.4.0
+set_module_property DISPLAY_NAME            "Slow Control Hub Mu3E IP"
+set_module_property VERSION                 26.5.0.0411
 set_module_property DESCRIPTION             \
     "Modular slow-control hub with split-buffer architecture, linked-list \
      payload RAM, out-of-order dispatch, atomic RMW, release/acquire ordering \
