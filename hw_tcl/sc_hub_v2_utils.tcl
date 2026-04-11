@@ -41,6 +41,20 @@ proc sc_hub_v2_format_int {n} {
     return $result
 }
 
+proc sc_hub_v2_format_hex {n width} {
+    set mask [expr {(1 << ($width * 4)) - 1}]
+    set clipped [expr {$n & $mask}]
+    return [format "0x%0*X" $width $clipped]
+}
+
+proc sc_hub_v2_version_string_from_params {} {
+    set major [get_parameter_value VERSION_MAJOR]
+    set minor [get_parameter_value VERSION_MINOR]
+    set patch [get_parameter_value VERSION_PATCH]
+    set build [get_parameter_value BUILD]
+    return [format "%d.%d.%d.%04d" $major $minor $patch $build]
+}
+
 # Build an HTML table from a list of {header_list row_list_of_lists}
 proc sc_hub_v2_html_table {headers rows {width "100%"}} {
     set html "<table border=\"1\" cellpadding=\"4\" width=\"$width\">\n<tr>"

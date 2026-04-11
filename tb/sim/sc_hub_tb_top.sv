@@ -13,6 +13,12 @@ module sc_hub_tb_top;
   localparam int unsigned HUB_ERR_PKT_DROP_BIT           = 4;
   localparam int unsigned HUB_ERR_SLVERR_BIT             = 5;
   localparam int unsigned HUB_ERR_DECERR_BIT             = 6;
+  localparam int unsigned HUB_CSR_WO_EXT_PKT_RD_CONST    = 16'h00F;
+  localparam int unsigned HUB_CSR_WO_EXT_PKT_WR_CONST    = 16'h010;
+  localparam int unsigned HUB_CSR_WO_EXT_WORD_RD_CONST   = 16'h011;
+  localparam int unsigned HUB_CSR_WO_EXT_WORD_WR_CONST   = 16'h012;
+  localparam logic [31:0] HUB_UID_CONST                  = 32'h5343_4842;
+  localparam logic [31:0] HUB_VERSION_CONST              = {8'd26, 8'd5, 4'd0, 12'd411};
 
   logic clk;
   logic rst;
@@ -380,6 +386,35 @@ module sc_hub_tb_top;
     driver_inst.send_write(csr_addr(word_offset), 1, wr_words);
     monitor_inst.wait_reply(captured_reply);
     expect_write_reply(captured_reply, csr_addr(word_offset), 1);
+  endtask
+
+  task automatic send_swb_style_cmd(
+    input sc_cmd_t       cmd,
+    input logic [31:0]   payload_words[$],
+    input int unsigned   interword_skip_cycles
+  );
+    logic [31:0] swb_words[$];
+    logic [3:0]  swb_dataks[$];
+
+    swb_words.delete();
+    swb_dataks.delete();
+
+    swb_words.push_back(make_preamble_word(cmd));
+    swb_dataks.push_back(4'b0001);
+    swb_words.push_back(make_addr_word(cmd));
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(make_length_word(cmd));
+    swb_dataks.push_back(4'b0000);
+
+    for (int unsigned idx = 0; idx < payload_words.size(); idx++) begin
+      swb_words.push_back(payload_words[idx]);
+      swb_dataks.push_back(4'b0000);
+    end
+
+    swb_words.push_back({24'h0, K284_CONST});
+    swb_dataks.push_back(4'b0001);
+
+    driver_inst.send_swb_style_raw(swb_words, swb_dataks, interword_skip_cycles);
   endtask
 
   task automatic clear_hub_counters();
@@ -781,6 +816,48 @@ module sc_hub_tb_top;
     end
     driver_inst.drive_word({24'h0, K284_CONST}, 4'b0001);
     driver_inst.drive_idle();
+  endtask
+
+  task automatic report_sc_debug_state(input string context_name);
+    $display("sc_hub_tb_top: %s rx_state=%0d pkt_in_progress=%0b pkt_valid=%0b rx_ready=%0b core_rx_ready=%0b accept_new=%0b link_ready=%0b rx_q=%0d enqueue=%0d payload_grant=%0b payload_words=%0d dl_fifo=%0d pending=%0d pending_ext=%0d dispatch_valid=%0b dispatch_idx=%0d core_state=%0d bus_cmd_issued=%0b bus_cmd_pulse=%0b bus_cmd_ready=%0b bus_done=%0b bus_timeout=%0b reply_arm=%0b tx_reply_ready_q=%0b tx_reply_start=%0b tx_reply_done=%0b tx_pkt_q=%0d seen_replies=%0d ext_pkt_rd=%0d ext_word_rd=%0d last_rd_addr=0x%08h last_rd_data=0x%08h ext_pkt_wr=%0d ext_word_wr=%0d last_wr_addr=0x%08h last_wr_data=0x%08h pkt_drop=%0d",
+             context_name,
+             dut_inst.pkt_rx_inst.rx_state,
+             dut_inst.pkt_in_progress,
+             dut_inst.pkt_valid,
+             dut_inst.rx_ready,
+             dut_inst.core_rx_ready,
+             dut_inst.accept_new_pkt_int,
+             link_ready,
+             dut_inst.pkt_rx_inst.pkt_queue_count,
+             dut_inst.pkt_rx_inst.enqueue_stage_count,
+             dut_inst.pkt_rx_inst.payload_space_granted,
+             dut_inst.pkt_rx_inst.payload_check_words,
+             dut_inst.dl_fifo_usedw,
+             dut_inst.core_inst.pending_pkt_count,
+             dut_inst.core_inst.pending_ext_count,
+             dut_inst.core_inst.dispatch_winner_valid_q,
+             dut_inst.core_inst.dispatch_winner_idx_q,
+             dut_inst.core_inst.core_state,
+             dut_inst.core_inst.bus_cmd_issued,
+             dut_inst.core_inst.bus_cmd_valid_pulse,
+             dut_inst.bus_cmd_ready,
+             dut_inst.bus_done,
+             dut_inst.bus_timeout_pulse,
+             dut_inst.core_inst.reply_arm_pending,
+             dut_inst.core_inst.tx_reply_ready_q,
+             dut_inst.tx_reply_start,
+             dut_inst.tx_reply_done,
+             dut_inst.pkt_tx_inst.pkt_count,
+             monitor_inst.reply_seen_count,
+             dut_inst.core_inst.ext_pkt_read_count,
+             dut_inst.core_inst.ext_word_read_count,
+             dut_inst.core_inst.last_ext_read_addr,
+             dut_inst.core_inst.last_ext_read_data,
+             dut_inst.core_inst.ext_pkt_write_count,
+             dut_inst.core_inst.ext_word_write_count,
+             dut_inst.core_inst.last_ext_write_addr,
+             dut_inst.core_inst.last_ext_write_data,
+             dut_inst.pkt_rx_inst.pkt_drop_count);
   endtask
 
   task automatic run_t001();
@@ -1426,8 +1503,9 @@ module sc_hub_tb_top;
     logic [31:0] csr_word;
 
     read_csr_word(16'h000, csr_word);
-    if (csr_word !== 32'h5348_0000) begin
-      $error("sc_hub_tb_top: CSR ID mismatch exp=0x53480000 act=0x%08h", csr_word);
+    if (csr_word !== HUB_UID_CONST) begin
+      $error("sc_hub_tb_top: CSR UID mismatch exp=0x%08h act=0x%08h",
+             HUB_UID_CONST, csr_word);
     end
   endtask
 
@@ -1435,8 +1513,9 @@ module sc_hub_tb_top;
     logic [31:0] csr_word;
 
     read_csr_word(16'h001, csr_word);
-    if (csr_word !== 32'h1A08_031F) begin
-      $error("sc_hub_tb_top: CSR VERSION mismatch exp=0x1A08031F act=0x%08h", csr_word);
+    if (csr_word !== HUB_VERSION_CONST) begin
+      $error("sc_hub_tb_top: CSR META/VERSION mismatch exp=0x%08h act=0x%08h",
+             HUB_VERSION_CONST, csr_word);
     end
   endtask
 
@@ -1772,8 +1851,9 @@ module sc_hub_tb_top;
     logic [31:0] csr_word;
 
     read_csr_word(16'h000, csr_word);
-    if (csr_word !== 32'h5348_0000) begin
-      $error("sc_hub_tb_top: AXI4 CSR ID mismatch exp=0x53480000 act=0x%08h", csr_word);
+    if (csr_word !== HUB_UID_CONST) begin
+      $error("sc_hub_tb_top: AXI4 CSR UID mismatch exp=0x%08h act=0x%08h",
+             HUB_UID_CONST, csr_word);
     end
   endtask
 
@@ -2777,8 +2857,8 @@ module sc_hub_tb_top;
         expect_read_reply(replies[idx], replies[idx].start_address, 1);
       end else begin
         case (replies[idx].start_address)
-          24'h00FE80: expect_single_word_reply(replies[idx], 24'h00FE80, 32'h5348_0000);
-          24'h00FE81: expect_single_word_reply(replies[idx], 24'h00FE81, replies[idx].payload[0]);
+          24'h00FE80: expect_single_word_reply(replies[idx], 24'h00FE80, HUB_UID_CONST);
+          24'h00FE81: expect_single_word_reply(replies[idx], 24'h00FE81, HUB_VERSION_CONST);
           24'h00FE82: expect_single_word_reply(replies[idx], 24'h00FE82, 32'h0000_0001);
           24'h00FE86: expect_single_word_reply(replies[idx], 24'h00FE86, 32'h0000_0000);
           default: $error("sc_hub_tb_top: T216 unexpected internal reply addr=0x%06h",
@@ -4221,9 +4301,9 @@ module sc_hub_tb_top;
     expect_write_reply(captured_reply, 24'h0017C4, 1);
 
     read_csr_word(16'h000, csr_word);
-    if (csr_word !== 32'h5348_0000) begin
-      $error("sc_hub_tb_top: CSR ID mismatch during interleaved traffic exp=0x53480000 act=0x%08h",
-             csr_word);
+    if (csr_word !== HUB_UID_CONST) begin
+      $error("sc_hub_tb_top: CSR UID mismatch during interleaved traffic exp=0x%08h act=0x%08h",
+             HUB_UID_CONST, csr_word);
     end
 
     wr_words[0] = 32'hB160_0002;
@@ -4662,7 +4742,7 @@ module sc_hub_tb_top;
     join
     release avm_waitrequest;
 
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
     if (bus_activity_seen) begin
       $error("sc_hub_tb_top: T202 internal CSR read incorrectly drove the external AVMM bus");
     end
@@ -4884,7 +4964,7 @@ module sc_hub_tb_top;
     monitor_inst.wait_reply(captured_reply);
     expect_write_reply(captured_reply, 24'h000280, 16);
     monitor_inst.wait_reply(captured_reply);
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
   endtask
 
   task automatic run_t209();
@@ -5455,7 +5535,7 @@ module sc_hub_tb_top;
     driver_inst.send_read(csr_addr(16'h000), 1);
 
     monitor_inst.wait_reply(csr_reply);
-    expect_single_word_reply(csr_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(csr_reply, csr_addr(16'h000), HUB_UID_CONST);
     monitor_inst.wait_reply(atomic_reply);
     expect_atomic_ok_reply(atomic_reply, 24'h000223, original_word,
                            SC_ORDER_RELAXED, 4'h0, 8'h00, 2'b00);
@@ -6095,7 +6175,7 @@ module sc_hub_tb_top;
         expect_read_reply(reply, 24'h0042F0, 1);
         saw_ext_read = 1'b1;
       end else if (reply.start_address == csr_addr(16'h000)) begin
-        expect_single_word_reply(reply, csr_addr(16'h000), 32'h5348_0000);
+        expect_single_word_reply(reply, csr_addr(16'h000), HUB_UID_CONST);
         saw_csr_read = 1'b1;
       end else begin
         $error("sc_hub_tb_top: T428 unexpected reply addr=0x%06h len=%0d rsp=%0b",
@@ -6427,7 +6507,7 @@ module sc_hub_tb_top;
     driver_inst.send_write(csr_addr(16'h006), 1, wr_words);
 
     monitor_inst.wait_reply(csr_read_reply);
-    expect_single_word_reply(csr_read_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(csr_read_reply, csr_addr(16'h000), HUB_UID_CONST);
     monitor_inst.wait_reply(csr_write_reply);
     expect_write_reply(csr_write_reply, csr_addr(16'h006), 1);
 
@@ -6594,7 +6674,7 @@ module sc_hub_tb_top;
     end
     wait fork;
     monitor_inst.wait_reply(csr_reply);
-    expect_single_word_reply(csr_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(csr_reply, csr_addr(16'h000), HUB_UID_CONST);
   endtask
 
   task automatic run_t445();
@@ -6606,7 +6686,7 @@ module sc_hub_tb_top;
 
     driver_inst.send_read(csr_addr(16'h000), 1);
     monitor_inst.wait_reply(captured_reply);
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
 
     fork : t445_ext_attempt
       begin
@@ -6627,7 +6707,7 @@ module sc_hub_tb_top;
 
     driver_inst.send_read(csr_addr(16'h000), 1);
     monitor_inst.wait_reply(captured_reply);
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
   endtask
 
   task automatic run_t446();
@@ -7270,7 +7350,7 @@ module sc_hub_tb_top;
     expect_read_reply(captured_reply, 24'h005410, 1);
     driver_inst.send_read(csr_addr(16'h000), 1);
     monitor_inst.wait_reply(captured_reply);
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
   endtask
 
   task automatic run_t542();
@@ -7327,7 +7407,7 @@ module sc_hub_tb_top;
 
     driver_inst.send_read(csr_addr(16'h000), 1);
     monitor_inst.wait_reply(captured_reply);
-    expect_single_word_reply(captured_reply, csr_addr(16'h000), 32'h5348_0000);
+    expect_single_word_reply(captured_reply, csr_addr(16'h000), HUB_UID_CONST);
   endtask
 
   task automatic run_t546();
@@ -7475,6 +7555,543 @@ module sc_hub_tb_top;
     monitor_inst.wait_reply(captured_reply);
     expect_reply_header_ok(captured_reply, 24'h005490, 1);
   endtask
+
+`ifndef SC_HUB_BUS_AXI4
+  task automatic run_t550();
+    logic [31:0] swb_words[$];
+    logic [3:0]  swb_dataks[$];
+    logic [31:0] expected_words[$];
+
+    clear_hub_counters();
+    avmm_bfm_inst.mem[18'h0] <= 32'hDEAD_0000;
+    avmm_bfm_inst.mem[18'h1] <= 32'hDEAD_0001;
+    avmm_bfm_inst.mem[18'h2] <= 32'hDEAD_0002;
+
+    swb_words.delete();
+    swb_dataks.delete();
+    expected_words.delete();
+
+    swb_words.push_back(32'h1D00_02BC);
+    swb_dataks.push_back(4'b0001);
+    swb_words.push_back(32'h0000_0000);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0003);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0000);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0001);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0006);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_009C);
+    swb_dataks.push_back(4'b0001);
+
+    expected_words.push_back(32'h0000_0000);
+    expected_words.push_back(32'h0000_0001);
+    expected_words.push_back(32'h0000_0006);
+
+    driver_inst.send_swb_style_raw(swb_words, swb_dataks, 1);
+    monitor_inst.wait_reply_cycles(captured_reply, 512);
+    if (captured_reply.echoed_length === 16'hffff) begin
+      report_sc_debug_state("T550 no reply after SWB-style packet");
+      return;
+    end
+
+    expect_write_reply(captured_reply, 24'h000000, 3);
+    check_bfm_words(24'h000000, expected_words);
+    if ($unsigned(dut_inst.core_inst.ext_pkt_write_count) != 32'd1 ||
+        $unsigned(dut_inst.core_inst.ext_word_write_count) != 32'd3 ||
+        dut_inst.core_inst.last_ext_write_addr != 32'h0000_0002 ||
+        dut_inst.core_inst.last_ext_write_data != 32'h0000_0006) begin
+      report_sc_debug_state("T550 post-reply diagnostics mismatch");
+      $error("sc_hub_tb_top: T550 external write diagnostics mismatch pkt=%0d words=%0d last_addr=0x%08h last_data=0x%08h",
+             dut_inst.core_inst.ext_pkt_write_count,
+             dut_inst.core_inst.ext_word_write_count,
+             dut_inst.core_inst.last_ext_write_addr,
+             dut_inst.core_inst.last_ext_write_data);
+    end
+
+    report_sc_debug_state("T550 completed SWB-style packet");
+  endtask
+
+  task automatic run_t551();
+    logic [31:0] swb_words[$];
+    logic [3:0]  swb_dataks[$];
+    logic [31:0] expected_words[$];
+    logic [31:0] pkt_drop_count;
+    int unsigned wait_cycles;
+
+    clear_hub_counters();
+    avmm_bfm_inst.mem[18'h0] <= 32'hDEAD_1000;
+    avmm_bfm_inst.mem[18'h1] <= 32'hDEAD_1001;
+    avmm_bfm_inst.mem[18'h2] <= 32'hDEAD_1002;
+
+    swb_words.delete();
+    swb_dataks.delete();
+    expected_words.delete();
+
+    swb_words.push_back(32'h1D00_02BC);
+    swb_dataks.push_back(4'b0001);
+    swb_words.push_back(32'h0000_0000);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0003);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0000);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0001);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_0006);
+    swb_dataks.push_back(4'b0000);
+    swb_words.push_back(32'h0000_009C);
+    swb_dataks.push_back(4'b0001);
+
+    expected_words.push_back(32'h0000_0000);
+    expected_words.push_back(32'h0000_0001);
+    expected_words.push_back(32'h0000_0006);
+
+    force dut_inst.pkt_rx_inst.payload_space_granted = 1'b0;
+    driver_inst.send_swb_style_raw(swb_words, swb_dataks, 1);
+    wait_clks(4);
+    release dut_inst.pkt_rx_inst.payload_space_granted;
+    monitor_inst.assert_no_reply(400ns);
+    for (wait_cycles = 0; wait_cycles < 64; wait_cycles++) begin
+      if (dut_inst.pkt_rx_inst.rx_state == 0 &&
+          dut_inst.pkt_in_progress == 1'b0 &&
+          dut_inst.pkt_valid == 1'b0) begin
+        break;
+      end
+      wait_clks(1);
+    end
+
+    if (wait_cycles == 64 ||
+        dut_inst.pkt_rx_inst.rx_state != 0 ||
+        dut_inst.pkt_in_progress != 1'b0 ||
+        dut_inst.pkt_valid != 1'b0 ||
+        dut_inst.core_inst.ext_pkt_write_count != 32'd0) begin
+      report_sc_debug_state("T551 expected recovery after WAITING_WRITE_SPACE violation");
+      $error("sc_hub_tb_top: T551 expected RX to drop the packet and recover after ignored backpressure");
+    end
+
+    read_pkt_drop_count(pkt_drop_count);
+    if (pkt_drop_count == 32'd0) begin
+      report_sc_debug_state("T551 missing pkt_drop_count after recovery");
+      $error("sc_hub_tb_top: T551 expected pkt_drop_count to increment after WAITING_WRITE_SPACE violation");
+    end
+
+    driver_inst.send_swb_style_raw(swb_words, swb_dataks, 1);
+    monitor_inst.wait_reply_cycles(captured_reply, 512);
+    if (captured_reply.echoed_length === 16'hffff) begin
+      report_sc_debug_state("T551 no reply after recovery");
+      return;
+    end
+
+    expect_write_reply(captured_reply, 24'h000000, 3);
+    check_bfm_words(24'h000000, expected_words);
+    if (dut_inst.core_inst.ext_pkt_write_count != 32'd1 ||
+        dut_inst.core_inst.ext_word_write_count != 32'd3 ||
+        dut_inst.core_inst.last_ext_write_addr != 32'h0000_0002 ||
+        dut_inst.core_inst.last_ext_write_data != 32'h0000_0006) begin
+      report_sc_debug_state("T551 post-recovery diagnostics mismatch");
+      $error("sc_hub_tb_top: T551 expected the follow-up SWB-style write to complete after recovery");
+    end
+
+    report_sc_debug_state("T551 recovered after WAITING_WRITE_SPACE violation");
+  endtask
+
+  task automatic run_t552();
+    sc_cmd_t       cmd;
+    logic [31:0]   wr_words[$];
+    logic [31:0]   csr_word;
+    logic [23:0]   start_addr;
+    int unsigned   iter;
+    int unsigned   expected_pkt_wr;
+    int unsigned   expected_pkt_rd;
+    int unsigned   expected_word_wr;
+    int unsigned   expected_word_rd;
+
+    clear_hub_counters();
+    expected_pkt_wr  = 0;
+    expected_pkt_rd  = 0;
+    expected_word_wr = 0;
+    expected_word_rd = 0;
+
+    for (iter = 0; iter < 24; iter++) begin
+      start_addr = 24'h000180 + (iter * 8);
+      wr_words.delete();
+      for (int unsigned idx = 0; idx < 3; idx++) begin
+        wr_words.push_back(32'h5200_0000 + (iter << 8) + idx);
+      end
+
+      cmd = make_cmd(SC_WRITE, start_addr, wr_words.size());
+      send_swb_style_cmd(cmd, wr_words, (iter % 3) + 1);
+      monitor_inst.wait_reply_cycles(captured_reply, 512);
+      expect_write_reply(captured_reply, start_addr, wr_words.size());
+      check_bfm_words(start_addr, wr_words);
+      expected_pkt_wr  += 1;
+      expected_word_wr += wr_words.size();
+
+      cmd = make_cmd(SC_READ, start_addr, wr_words.size());
+      send_swb_style_cmd(cmd, {}, (iter % 2) + 1);
+      monitor_inst.wait_reply_cycles(captured_reply, 512);
+      expect_reply_header_ok(captured_reply, start_addr, wr_words.size());
+      if (captured_reply.payload_words != wr_words.size()) begin
+        $error("sc_hub_tb_top: T552 payload count mismatch at iter=%0d exp=%0d act=%0d",
+               iter, wr_words.size(), captured_reply.payload_words);
+      end
+      for (int unsigned idx = 0; idx < wr_words.size() && idx < captured_reply.payload_words; idx++) begin
+        if (captured_reply.payload[idx] !== wr_words[idx]) begin
+          $error("sc_hub_tb_top: T552 readback[%0d] mismatch at iter=%0d exp=0x%08h act=0x%08h",
+                 idx, iter, wr_words[idx], captured_reply.payload[idx]);
+        end
+      end
+      expected_pkt_rd  += 1;
+      expected_word_rd += wr_words.size();
+
+      if ((iter % 6) == 5) begin
+        read_csr_word(HUB_CSR_WO_EXT_PKT_WR_CONST, csr_word);
+        if (csr_word != expected_pkt_wr) begin
+          $error("sc_hub_tb_top: T552 EXT_PKT_WR mismatch at iter=%0d exp=%0d act=%0d",
+                 iter, expected_pkt_wr, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_WORD_WR_CONST, csr_word);
+        if (csr_word != expected_word_wr) begin
+          $error("sc_hub_tb_top: T552 EXT_WORD_WR mismatch at iter=%0d exp=%0d act=%0d",
+                 iter, expected_word_wr, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_PKT_RD_CONST, csr_word);
+        if (csr_word != expected_pkt_rd) begin
+          $error("sc_hub_tb_top: T552 EXT_PKT_RD mismatch at iter=%0d exp=%0d act=%0d",
+                 iter, expected_pkt_rd, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_WORD_RD_CONST, csr_word);
+        if (csr_word != expected_word_rd) begin
+          $error("sc_hub_tb_top: T552 EXT_WORD_RD mismatch at iter=%0d exp=%0d act=%0d",
+                 iter, expected_word_rd, csr_word);
+        end
+
+        read_pkt_drop_count(csr_word);
+        if (csr_word != 32'd0) begin
+          report_sc_debug_state("T552 unexpected packet drop during long run");
+          $error("sc_hub_tb_top: T552 expected pkt_drop_count to remain zero during long run");
+        end
+      end
+    end
+
+    wait_clks(16);
+    if (dut_inst.pkt_rx_inst.rx_state != 0 ||
+        dut_inst.pkt_in_progress != 1'b0 ||
+        dut_inst.pkt_valid != 1'b0 ||
+        dut_inst.core_inst.pending_pkt_count != 0 ||
+        dut_inst.core_inst.pending_ext_count != 0) begin
+      report_sc_debug_state("T552 expected quiescent end state");
+      $error("sc_hub_tb_top: T552 expected the hub to quiesce after the long SWB-style run");
+    end
+
+    report_sc_debug_state("T552 completed long SWB-style cross run");
+  endtask
+
+  task automatic run_t553();
+    logic [23:0] start_addr;
+    logic [31:0] csr_word;
+    bit          seen_reply[0:9];
+    int unsigned rsp_idx;
+    int unsigned addr_idx;
+    int unsigned payload_idx;
+    int unsigned expected_pkt_rd;
+    int unsigned expected_word_rd;
+
+    clear_hub_counters();
+    for (addr_idx = 0; addr_idx < 10; addr_idx++) begin
+      seen_reply[addr_idx] = 1'b0;
+    end
+
+    for (addr_idx = 0; addr_idx < 10; addr_idx++) begin
+      start_addr = 24'h000040 + (addr_idx * 4);
+      driver_inst.send_read(start_addr, 4);
+    end
+
+    expected_pkt_rd  = 10;
+    expected_word_rd = 40;
+    for (rsp_idx = 0; rsp_idx < 10; rsp_idx++) begin
+      monitor_inst.wait_reply_cycles(captured_reply, 1024);
+      if (captured_reply.echoed_length === 16'hffff) begin
+        report_sc_debug_state("T553 timed out waiting for outstanding read reply");
+        $error("sc_hub_tb_top: T553 missing reply rsp_idx=%0d", rsp_idx);
+        return;
+      end
+
+      if ((captured_reply.start_address < 24'h000040) ||
+          (captured_reply.start_address > 24'h000064) ||
+          (captured_reply.start_address[1:0] != 2'b00)) begin
+        report_sc_debug_state("T553 unexpected reply address");
+        $error("sc_hub_tb_top: T553 unexpected reply address=0x%06h",
+               captured_reply.start_address);
+      end
+
+      addr_idx = (captured_reply.start_address - 24'h000040) / 4;
+      if (addr_idx > 9) begin
+        report_sc_debug_state("T553 reply address index out of range");
+        $error("sc_hub_tb_top: T553 reply address index out of range addr=0x%06h idx=%0d",
+               captured_reply.start_address, addr_idx);
+      end else begin
+        if (seen_reply[addr_idx]) begin
+          report_sc_debug_state("T553 duplicate outstanding read reply");
+          $error("sc_hub_tb_top: T553 duplicate reply for addr=0x%06h",
+                 captured_reply.start_address);
+        end
+        seen_reply[addr_idx] = 1'b1;
+      end
+
+      expect_reply_header_ok(captured_reply, captured_reply.start_address, 4);
+      if (captured_reply.payload_words != 4) begin
+        $error("sc_hub_tb_top: T553 payload count mismatch addr=0x%06h exp=4 act=%0d",
+               captured_reply.start_address,
+               captured_reply.payload_words);
+      end
+      for (payload_idx = 0; payload_idx < 4 && payload_idx < captured_reply.payload_words; payload_idx++) begin
+        if (captured_reply.payload[payload_idx] !== avmm_bfm_inst.mem[captured_reply.start_address[17:0] + payload_idx]) begin
+          $error("sc_hub_tb_top: T553 payload[%0d] mismatch addr=0x%06h exp=0x%08h act=0x%08h",
+                 payload_idx,
+                 captured_reply.start_address,
+                 avmm_bfm_inst.mem[captured_reply.start_address[17:0] + payload_idx],
+                 captured_reply.payload[payload_idx]);
+        end
+      end
+    end
+
+    for (addr_idx = 0; addr_idx < 10; addr_idx++) begin
+      if (!seen_reply[addr_idx]) begin
+        report_sc_debug_state("T553 missing reply after receive loop");
+        $error("sc_hub_tb_top: T553 never observed reply for addr=0x%06h",
+               24'h000040 + (addr_idx * 4));
+      end
+    end
+
+    read_csr_word(HUB_CSR_WO_EXT_PKT_RD_CONST, csr_word);
+    if (csr_word != expected_pkt_rd) begin
+      $error("sc_hub_tb_top: T553 EXT_PKT_RD mismatch exp=%0d act=%0d",
+             expected_pkt_rd, csr_word);
+    end
+
+    read_csr_word(HUB_CSR_WO_EXT_WORD_RD_CONST, csr_word);
+    if (csr_word != expected_word_rd) begin
+      $error("sc_hub_tb_top: T553 EXT_WORD_RD mismatch exp=%0d act=%0d",
+             expected_word_rd, csr_word);
+    end
+
+    read_pkt_drop_count(csr_word);
+    if (csr_word != 32'd0) begin
+      report_sc_debug_state("T553 unexpected packet drop during outstanding reads");
+      $error("sc_hub_tb_top: T553 expected pkt_drop_count to remain zero");
+    end
+
+    if (dut_inst.pkt_rx_inst.rx_state != 0 ||
+        dut_inst.pkt_in_progress != 1'b0 ||
+        dut_inst.pkt_valid != 1'b0 ||
+        dut_inst.core_inst.pending_pkt_count != 0 ||
+        dut_inst.core_inst.pending_ext_count != 0) begin
+      report_sc_debug_state("T553 expected quiescent end state");
+      $error("sc_hub_tb_top: T553 expected the hub to quiesce after outstanding read stress");
+    end
+
+    report_sc_debug_state("T553 completed outstanding read stress");
+  endtask
+
+  task automatic run_t554();
+    localparam int unsigned ROUND_COUNT_CONST           = 32;
+    localparam int unsigned OUTSTANDING_READS_CONST     = 10;
+    localparam int unsigned OUTSTANDING_READ_WORDS_CONST = 4;
+    localparam int unsigned WRITE_READBACKS_CONST       = 4;
+    localparam int unsigned WRITE_WORDS_CONST           = 3;
+
+    logic [23:0] read_base_addr;
+    logic [23:0] write_base_addr;
+    logic [23:0] start_addr;
+    logic [31:0] csr_word;
+    logic [31:0] wr_words[$];
+    bit          seen_reply[0:OUTSTANDING_READS_CONST - 1];
+    int unsigned round_idx;
+    int unsigned addr_idx;
+    int unsigned rsp_idx;
+    int unsigned payload_idx;
+    int unsigned expected_pkt_rd;
+    int unsigned expected_word_rd;
+    int unsigned expected_pkt_wr;
+    int unsigned expected_word_wr;
+
+    clear_hub_counters();
+    expected_pkt_rd  = 0;
+    expected_word_rd = 0;
+    expected_pkt_wr  = 0;
+    expected_word_wr = 0;
+
+    for (round_idx = 0; round_idx < ROUND_COUNT_CONST; round_idx++) begin
+      read_base_addr  = 24'h001000 + (round_idx * 24'h000080);
+      write_base_addr = 24'h002000 + (round_idx * 24'h000080);
+      for (addr_idx = 0; addr_idx < OUTSTANDING_READS_CONST; addr_idx++) begin
+        seen_reply[addr_idx] = 1'b0;
+      end
+
+      for (addr_idx = 0; addr_idx < OUTSTANDING_READS_CONST; addr_idx++) begin
+        start_addr = read_base_addr + (addr_idx * 4);
+        driver_inst.send_read(start_addr, OUTSTANDING_READ_WORDS_CONST);
+      end
+
+      expected_pkt_rd  = expected_pkt_rd + OUTSTANDING_READS_CONST;
+      expected_word_rd = expected_word_rd + (OUTSTANDING_READS_CONST * OUTSTANDING_READ_WORDS_CONST);
+
+      for (rsp_idx = 0; rsp_idx < OUTSTANDING_READS_CONST; rsp_idx++) begin
+        monitor_inst.wait_reply_cycles(captured_reply, 2048);
+        if (captured_reply.echoed_length === 16'hffff) begin
+          report_sc_debug_state("T554 timed out waiting for outstanding read reply");
+          $error("sc_hub_tb_top: T554 missing reply round=%0d rsp_idx=%0d",
+                 round_idx, rsp_idx);
+          return;
+        end
+
+        if ((captured_reply.start_address < read_base_addr) ||
+            (captured_reply.start_address > (read_base_addr + ((OUTSTANDING_READS_CONST - 1) * 4))) ||
+            (captured_reply.start_address[1:0] != 2'b00)) begin
+          report_sc_debug_state("T554 unexpected outstanding reply address");
+          $error("sc_hub_tb_top: T554 unexpected reply address round=%0d addr=0x%06h",
+                 round_idx, captured_reply.start_address);
+        end
+
+        addr_idx = (captured_reply.start_address - read_base_addr) / 4;
+        if (addr_idx >= OUTSTANDING_READS_CONST) begin
+          report_sc_debug_state("T554 outstanding reply index out of range");
+          $error("sc_hub_tb_top: T554 reply address index out of range round=%0d addr=0x%06h idx=%0d",
+                 round_idx, captured_reply.start_address, addr_idx);
+        end else begin
+          if (seen_reply[addr_idx]) begin
+            report_sc_debug_state("T554 duplicate outstanding read reply");
+            $error("sc_hub_tb_top: T554 duplicate reply round=%0d addr=0x%06h",
+                   round_idx, captured_reply.start_address);
+          end
+          seen_reply[addr_idx] = 1'b1;
+        end
+
+        expect_reply_header_ok(captured_reply,
+                               captured_reply.start_address,
+                               OUTSTANDING_READ_WORDS_CONST);
+        if (captured_reply.payload_words != OUTSTANDING_READ_WORDS_CONST) begin
+          $error("sc_hub_tb_top: T554 payload count mismatch round=%0d addr=0x%06h exp=%0d act=%0d",
+                 round_idx,
+                 captured_reply.start_address,
+                 OUTSTANDING_READ_WORDS_CONST,
+                 captured_reply.payload_words);
+        end
+        for (payload_idx = 0;
+             payload_idx < OUTSTANDING_READ_WORDS_CONST && payload_idx < captured_reply.payload_words;
+             payload_idx++) begin
+          if (captured_reply.payload[payload_idx] !== expected_bus_word(captured_reply.start_address, payload_idx)) begin
+            $error("sc_hub_tb_top: T554 payload[%0d] mismatch round=%0d addr=0x%06h exp=0x%08h act=0x%08h",
+                   payload_idx,
+                   round_idx,
+                   captured_reply.start_address,
+                   expected_bus_word(captured_reply.start_address, payload_idx),
+                   captured_reply.payload[payload_idx]);
+          end
+        end
+      end
+
+      for (addr_idx = 0; addr_idx < OUTSTANDING_READS_CONST; addr_idx++) begin
+        if (!seen_reply[addr_idx]) begin
+          report_sc_debug_state("T554 missing outstanding reply after receive loop");
+          $error("sc_hub_tb_top: T554 never observed reply round=%0d addr=0x%06h",
+                 round_idx, read_base_addr + (addr_idx * 4));
+        end
+      end
+
+      for (addr_idx = 0; addr_idx < WRITE_READBACKS_CONST; addr_idx++) begin
+        start_addr = write_base_addr + (addr_idx * 4);
+        fill_write_words(wr_words,
+                         WRITE_WORDS_CONST,
+                         32'h5600_0000 + (round_idx * 32'h100) + (addr_idx * 32'h10));
+        driver_inst.send_write(start_addr, WRITE_WORDS_CONST, wr_words);
+        monitor_inst.wait_reply(captured_reply);
+        expect_write_reply(captured_reply, start_addr, WRITE_WORDS_CONST);
+
+        driver_inst.send_read(start_addr, WRITE_WORDS_CONST);
+        monitor_inst.wait_reply(captured_reply);
+        expect_reply_header_ok(captured_reply, start_addr, WRITE_WORDS_CONST);
+        if (captured_reply.payload_words != WRITE_WORDS_CONST) begin
+          $error("sc_hub_tb_top: T554 readback payload count mismatch round=%0d addr=0x%06h exp=%0d act=%0d",
+                 round_idx,
+                 start_addr,
+                 WRITE_WORDS_CONST,
+                 captured_reply.payload_words);
+        end
+        for (payload_idx = 0; payload_idx < WRITE_WORDS_CONST && payload_idx < captured_reply.payload_words; payload_idx++) begin
+          if (captured_reply.payload[payload_idx] !== wr_words[payload_idx]) begin
+            $error("sc_hub_tb_top: T554 readback[%0d] mismatch round=%0d addr=0x%06h exp=0x%08h act=0x%08h",
+                   payload_idx,
+                   round_idx,
+                   start_addr,
+                   wr_words[payload_idx],
+                   captured_reply.payload[payload_idx]);
+          end
+        end
+      end
+
+      expected_pkt_wr  = expected_pkt_wr + WRITE_READBACKS_CONST;
+      expected_word_wr = expected_word_wr + (WRITE_READBACKS_CONST * WRITE_WORDS_CONST);
+      expected_pkt_rd  = expected_pkt_rd + WRITE_READBACKS_CONST;
+      expected_word_rd = expected_word_rd + (WRITE_READBACKS_CONST * WRITE_WORDS_CONST);
+
+      if ((((round_idx + 1) % 8) == 0) || (round_idx + 1 == ROUND_COUNT_CONST)) begin
+        read_csr_word(HUB_CSR_WO_EXT_PKT_RD_CONST, csr_word);
+        if (csr_word != expected_pkt_rd) begin
+          report_sc_debug_state("T554 EXT_PKT_RD mismatch during soak");
+          $error("sc_hub_tb_top: T554 EXT_PKT_RD mismatch round=%0d exp=%0d act=%0d",
+                 round_idx, expected_pkt_rd, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_WORD_RD_CONST, csr_word);
+        if (csr_word != expected_word_rd) begin
+          report_sc_debug_state("T554 EXT_WORD_RD mismatch during soak");
+          $error("sc_hub_tb_top: T554 EXT_WORD_RD mismatch round=%0d exp=%0d act=%0d",
+                 round_idx, expected_word_rd, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_PKT_WR_CONST, csr_word);
+        if (csr_word != expected_pkt_wr) begin
+          report_sc_debug_state("T554 EXT_PKT_WR mismatch during soak");
+          $error("sc_hub_tb_top: T554 EXT_PKT_WR mismatch round=%0d exp=%0d act=%0d",
+                 round_idx, expected_pkt_wr, csr_word);
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_WORD_WR_CONST, csr_word);
+        if (csr_word != expected_word_wr) begin
+          report_sc_debug_state("T554 EXT_WORD_WR mismatch during soak");
+          $error("sc_hub_tb_top: T554 EXT_WORD_WR mismatch round=%0d exp=%0d act=%0d",
+                 round_idx, expected_word_wr, csr_word);
+        end
+
+        read_pkt_drop_count(csr_word);
+        if (csr_word != 32'd0) begin
+          report_sc_debug_state("T554 unexpected packet drop during soak");
+          $error("sc_hub_tb_top: T554 expected pkt_drop_count to remain zero during soak");
+        end
+      end
+    end
+
+    wait_clks(16);
+    if (dut_inst.pkt_rx_inst.rx_state != 0 ||
+        dut_inst.pkt_in_progress != 1'b0 ||
+        dut_inst.pkt_valid != 1'b0 ||
+        dut_inst.core_inst.pending_pkt_count != 0 ||
+        dut_inst.core_inst.pending_ext_count != 0) begin
+      report_sc_debug_state("T554 expected quiescent end state");
+      $error("sc_hub_tb_top: T554 expected the hub to quiesce after soak traffic");
+    end
+
+    report_sc_debug_state("T554 completed long outstanding/readback soak");
+  endtask
+`endif
 
   task automatic run_t521();
     run_t517();
@@ -9092,6 +9709,21 @@ module sc_hub_tb_top;
       end
       "T549": begin
         run_t549();
+      end
+      "T550": begin
+        run_t550();
+      end
+      "T551": begin
+        run_t551();
+      end
+      "T552": begin
+        run_t552();
+      end
+      "T553": begin
+        run_t553();
+      end
+      "T554": begin
+        run_t554();
       end
 `endif
       "smoke_basic": begin

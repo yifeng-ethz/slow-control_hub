@@ -9,6 +9,30 @@
 # ============================================================================
 
 # ============================================================================
+# PACKAGING VERSION CONSTANTS
+# ============================================================================
+
+set sc_hub_v2_params_dir [file dirname [file normalize [info script]]]
+set sc_hub_v2_ip_dir [file normalize [file join $sc_hub_v2_params_dir ..]]
+
+set SC_HUB_V2_IP_UID_DEFAULT_CONST        [expr {0x53434842}] ;# ASCII "SCHB"
+set SC_HUB_V2_VERSION_MAJOR_DEFAULT_CONST 26
+set SC_HUB_V2_VERSION_MINOR_DEFAULT_CONST 5
+set SC_HUB_V2_VERSION_PATCH_DEFAULT_CONST 0
+set SC_HUB_V2_BUILD_DEFAULT_CONST         411
+set SC_HUB_V2_VERSION_DATE_DEFAULT_CONST  20260411
+set SC_HUB_V2_VERSION_GIT_DEFAULT_CONST   0
+set SC_HUB_V2_INSTANCE_ID_DEFAULT_CONST   0
+
+if {![catch {
+    set sc_hub_v2_git_short [string trim [exec git -C $sc_hub_v2_ip_dir rev-parse --short HEAD]]
+}]} {
+    if {[regexp {^[0-9a-fA-F]+$} $sc_hub_v2_git_short]} {
+        scan $sc_hub_v2_git_short %x SC_HUB_V2_VERSION_GIT_DEFAULT_CONST
+    }
+}
+
+# ============================================================================
 # GROUP 1: Preset selector (GUI-only, not an HDL generic)
 # ============================================================================
 
@@ -33,7 +57,73 @@ set_parameter_property PRESET ALLOWED_RANGES {
 }
 
 # ============================================================================
-# GROUP 2: Bus Interface
+# GROUP 2: Common Identity Header
+# ============================================================================
+
+add_parameter IP_UID NATURAL $SC_HUB_V2_IP_UID_DEFAULT_CONST
+set_parameter_property IP_UID DISPLAY_NAME "IP UID"
+set_parameter_property IP_UID DESCRIPTION \
+    "ASCII 4-character Mu3e IP identifier. Default = 'SCHB' (0x53434842). \
+     Integration-time editable so a derivative wrapper can override the UID."
+set_parameter_property IP_UID HDL_PARAMETER true
+
+add_parameter VERSION_MAJOR NATURAL $SC_HUB_V2_VERSION_MAJOR_DEFAULT_CONST
+set_parameter_property VERSION_MAJOR DISPLAY_NAME "Version Major"
+set_parameter_property VERSION_MAJOR DESCRIPTION \
+    "Packed VERSION bits 31:24. Fixed by the packaged release year and not GUI editable."
+set_parameter_property VERSION_MAJOR HDL_PARAMETER true
+set_parameter_property VERSION_MAJOR ENABLED false
+
+add_parameter VERSION_MINOR NATURAL $SC_HUB_V2_VERSION_MINOR_DEFAULT_CONST
+set_parameter_property VERSION_MINOR DISPLAY_NAME "Version Minor"
+set_parameter_property VERSION_MINOR DESCRIPTION \
+    "Packed VERSION bits 23:16. Fixed by the packaged release and not GUI editable."
+set_parameter_property VERSION_MINOR HDL_PARAMETER true
+set_parameter_property VERSION_MINOR ENABLED false
+
+add_parameter VERSION_PATCH NATURAL $SC_HUB_V2_VERSION_PATCH_DEFAULT_CONST
+set_parameter_property VERSION_PATCH DISPLAY_NAME "Version Patch"
+set_parameter_property VERSION_PATCH DESCRIPTION \
+    "Packed VERSION bits 15:12. Fixed by the packaged release and not GUI editable."
+set_parameter_property VERSION_PATCH HDL_PARAMETER true
+set_parameter_property VERSION_PATCH ENABLED false
+
+add_parameter BUILD NATURAL $SC_HUB_V2_BUILD_DEFAULT_CONST
+set_parameter_property BUILD DISPLAY_NAME "Build (MMDD)"
+set_parameter_property BUILD DESCRIPTION \
+    "Packed VERSION bits 11:0 build stamp encoded as MMDD. Fixed by the packaged release."
+set_parameter_property BUILD HDL_PARAMETER true
+set_parameter_property BUILD ENABLED false
+
+add_parameter VERSION_DATE NATURAL $SC_HUB_V2_VERSION_DATE_DEFAULT_CONST
+set_parameter_property VERSION_DATE DISPLAY_NAME "Version Date"
+set_parameter_property VERSION_DATE DESCRIPTION \
+    "Full packaging date in YYYYMMDD form. Fixed by the packaged release."
+set_parameter_property VERSION_DATE HDL_PARAMETER true
+set_parameter_property VERSION_DATE ENABLED false
+
+add_parameter GIT_STAMP_OVERRIDE BOOLEAN false
+set_parameter_property GIT_STAMP_OVERRIDE DISPLAY_NAME "Override Git Stamp"
+set_parameter_property GIT_STAMP_OVERRIDE DESCRIPTION \
+    "When enabled, VERSION_GIT becomes editable. When disabled, the packaged git \
+     stamp remains fixed to the revision used when the _hw.tcl was authored."
+set_parameter_property GIT_STAMP_OVERRIDE HDL_PARAMETER false
+
+add_parameter VERSION_GIT NATURAL $SC_HUB_V2_VERSION_GIT_DEFAULT_CONST
+set_parameter_property VERSION_GIT DISPLAY_NAME "Version Git Stamp"
+set_parameter_property VERSION_GIT DESCRIPTION \
+    "32-bit git stamp exposed through META page 2. Disabled unless Override Git Stamp is enabled."
+set_parameter_property VERSION_GIT HDL_PARAMETER true
+set_parameter_property VERSION_GIT ENABLED false
+
+add_parameter INSTANCE_ID NATURAL $SC_HUB_V2_INSTANCE_ID_DEFAULT_CONST
+set_parameter_property INSTANCE_ID DISPLAY_NAME "Instance ID"
+set_parameter_property INSTANCE_ID DESCRIPTION \
+    "Per-instance integration identifier exposed through META page 3."
+set_parameter_property INSTANCE_ID HDL_PARAMETER true
+
+# ============================================================================
+# GROUP 3: Bus Interface
 # ============================================================================
 
 add_parameter BUS_TYPE STRING "AVALON"
@@ -60,7 +150,7 @@ set_parameter_property DATA_WIDTH HDL_PARAMETER false
 set_parameter_property DATA_WIDTH ALLOWED_RANGES {32}
 
 # ============================================================================
-# GROUP 3: Split-Buffer Architecture
+# GROUP 4: Split-Buffer Architecture
 # ============================================================================
 
 add_parameter OUTSTANDING_LIMIT NATURAL 8
@@ -137,7 +227,7 @@ set_parameter_property BP_FIFO_DEPTH HDL_PARAMETER true
 set_parameter_property BP_FIFO_DEPTH ALLOWED_RANGES {64 128 256 512 1024}
 
 # ============================================================================
-# GROUP 4: Feature Enables (compile-time)
+# GROUP 5: Feature Enables (compile-time)
 # ============================================================================
 
 add_parameter OOO_ENABLE BOOLEAN false
@@ -191,7 +281,7 @@ set_parameter_property HUB_CAP_ENABLE DESCRIPTION \
 set_parameter_property HUB_CAP_ENABLE HDL_PARAMETER true
 
 # ============================================================================
-# GROUP 5: Timing and Timeout
+# GROUP 6: Timing and Timeout
 # ============================================================================
 
 add_parameter RD_TIMEOUT_CYCLES NATURAL 1024
@@ -211,7 +301,7 @@ set_parameter_property WR_TIMEOUT_CYCLES HDL_PARAMETER true
 set_parameter_property WR_TIMEOUT_CYCLES ALLOWED_RANGES {128 256 512 1024 2048 4096 8192}
 
 # ============================================================================
-# GROUP 6: Compatibility (legacy generics)
+# GROUP 7: Compatibility (legacy generics)
 # ============================================================================
 
 add_parameter BACKPRESSURE BOOLEAN true
