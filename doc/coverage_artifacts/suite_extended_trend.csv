@@ -1,0 +1,6 @@
+step,case_id,txn_count,wall_s,cumulative_wall_s,delta_total_pct,delta_total_pct_per_s,total_pct,statements_pct,branches_pct,conditions_pct,expressions_pct,fsm_states_pct,fsm_transitions_pct,toggles_pct,covergroups_pct,merged_ucdb
+1,T341,768,6.598,6.598,41.27,6.255,41.27,53.71,41.11,20.26,26.31,75.00,42.55,21.04,50.15,/tmp/sc_hub_cov_current/suite_extended/suite_step01_T341.ucdb
+2,T356,768,7.199,13.797,5.47,0.760,46.74,56.32,44.85,24.22,32.32,79.31,49.12,25.09,62.72,/tmp/sc_hub_cov_current/suite_extended/suite_step02_T356.ucdb
+3,T357,768,6.086,19.883,6.55,1.076,53.29,58.02,48.68,26.98,38.38,93.10,59.64,31.38,70.09,/tmp/sc_hub_cov_current/suite_extended/suite_step03_T357.ucdb
+4,T343,768,7.771,27.654,0.13,0.017,53.42,58.08,48.85,27.16,38.38,93.10,59.64,32.05,70.09,/tmp/sc_hub_cov_current/suite_extended/suite_step04_T343.ucdb
+5,T351,768,63.219,90.873,0.34,0.005,53.76,58.58,49.18,28.02,39.39,93.10,59.64,32.10,70.09,/tmp/sc_hub_cov_current/suite_extended/suite_step05_T351.ucdb
