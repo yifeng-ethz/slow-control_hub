@@ -30,11 +30,7 @@ package require -exact qsys 16.1
 set_module_property NAME                    sc_hub_v2
 set_module_property DISPLAY_NAME            "Slow Control Hub Mu3E IP"
 set_module_property VERSION                 26.5.0.0411
-set_module_property DESCRIPTION             \
-    "Modular slow-control hub with split-buffer architecture, linked-list \
-     payload RAM, out-of-order dispatch, atomic RMW, release/acquire ordering \
-     semantics, and selectable Avalon-MM / AXI4 master interface. \
-     Configurable via presets or manual parameter tuning."
+set_module_property DESCRIPTION             "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP                   "Mu3e Control Plane/Modules"
 set_module_property AUTHOR                  "Yifeng Wang"
 set_module_property INTERNAL                false
