@@ -70,10 +70,10 @@ class sc_pkt_monitor_uvm extends uvm_monitor;
           2: begin
             reply_h.order_domain  = sc_reply_vif.data[31:28];
             reply_h.order_epoch   = sc_reply_vif.data[27:20];
-            reply_h.order_scope   = (sc_reply_vif.data[19:18] == 2'b11) ? 2'b00 : sc_reply_vif.data[19:18];
+            reply_h.order_scope   = 2'b00;
             reply_h.echoed_length = sc_reply_vif.data[15:0];
-            reply_h.header_valid  = 1'b1;
-            reply_h.response      = sc_reply_vif.data[17:16];
+            reply_h.header_valid  = sc_reply_vif.data[16];
+            reply_h.response      = sc_reply_vif.data[19:18];
             if ((reply_h.sc_type[0] == 1'b0) || reply_h.atomic) begin
               expected_payload_words = sc_reply_vif.data[15:0];
             end else begin

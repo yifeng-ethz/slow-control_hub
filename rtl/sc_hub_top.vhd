@@ -1,10 +1,10 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.5.0
+-- Version : 26.6.1
 -- Date    : 20260411
--- Change  : Standard CSR identity header (UID + META mux at words 0-1).
---           Pass identity generics through to sc_hub_core.
+-- Change  : Release-align the AVMM wrapper to v26.6.1 and keep the exported
+--           identity defaults consistent with the documented protocol support.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -33,8 +33,8 @@ entity sc_hub_top is
         -- Identity generics (standard CSR header at words 0-1)
         IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR              : natural := 26;
-        VERSION_MINOR              : natural := 5;
-        VERSION_PATCH              : natural := 0;
+        VERSION_MINOR              : natural := 6;
+        VERSION_PATCH              : natural := 1;
         BUILD                      : natural := 16#0411#;
         VERSION_DATE               : natural := 16#20260411#;
         VERSION_GIT                : natural := 0;
@@ -111,6 +111,7 @@ architecture rtl of sc_hub_top is
     signal tx_data_ready           : std_logic;
     signal bus_cmd_valid           : std_logic;
     signal bus_cmd_is_read         : std_logic;
+    signal bus_cmd_nonincrement    : std_logic;
     signal bus_cmd_address         : std_logic_vector(17 downto 0);
     signal bus_cmd_length          : std_logic_vector(15 downto 0);
     signal bus_cmd_ready           : std_logic;
@@ -289,6 +290,7 @@ begin
         i_tx_data_ready          => tx_data_ready,
         o_bus_cmd_valid          => bus_cmd_valid,
         o_bus_cmd_is_read        => bus_cmd_is_read,
+        o_bus_cmd_nonincrement   => bus_cmd_nonincrement,
         o_bus_cmd_address        => bus_cmd_address,
         o_bus_cmd_length         => bus_cmd_length,
         i_bus_cmd_ready          => bus_cmd_ready,
@@ -321,6 +323,7 @@ begin
         i_cmd_valid             => bus_cmd_valid,
         o_cmd_ready             => bus_cmd_ready,
         i_cmd_is_read           => bus_cmd_is_read,
+        i_cmd_nonincrement      => bus_cmd_nonincrement,
         i_cmd_address           => bus_cmd_address,
         i_cmd_length            => bus_cmd_length,
         i_wr_data_valid         => bus_wr_data_valid,

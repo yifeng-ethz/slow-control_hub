@@ -1,6 +1,13 @@
 -- File name: sc_hub_pkt_rx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
+-- Version : 26.2.30
+-- Date    : 20260411
+-- Change  : Make WAITING_WRITE_SPACE recover instead of wedging when the
+--           upstream ignores o_download_ready. Unexpected non-idle words now
+--           drop the partial packet, and timeout handling also runs while
+--           waiting for payload space.
+-- =======================================
 -- Version : 26.2.29
 -- Date    : 20260406
 -- Change  : Pre-compute payload_space_granted during LENGTHING state (1 cycle
@@ -50,7 +57,8 @@ entity sc_hub_pkt_rx is
         o_pkt_drop_pulse     : out std_logic;
         -- Debug: 32-bit word with per-path drop detail
         -- bits 15:0  = restart_drop_count (premature preamble restart drops)
-        -- bits 23:16 = ws_trailer_drop_count[7:0] (trailer in WAITING_WRITE_SPACE)
+        -- bits 23:16 = ws_trailer_drop_count[7:0]
+        --              (unexpected non-idle word in WAITING_WRITE_SPACE)
         -- bits 31:24 = idle_timeout_drop_count[7:0]
         o_debug_drop_detail  : out std_logic_vector(31 downto 0);
         o_fifo_usedw         : out std_logic_vector(9 downto 0);
@@ -461,7 +469,7 @@ begin
                     end if;
                 end if;
 
-                if (rx_state /= IDLING and rx_state /= WAITING_WRITE_SPACE) then
+                if (rx_state /= IDLING) then
                     if (
                         is_skip_v = true or
                         (is_idle_v = true and rx_state /= WRITING_DATA)
@@ -613,7 +621,12 @@ begin
                                 fifo_rollback <= '1';
                                 rx_state      <= IDLING;
                             elsif (payload_space_granted = '0') then
-                                null;
+                                if (is_skip_v = true or is_idle_v = true) then
+                                    null;
+                                else
+                                    drop_packet_v := true;
+                                    debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;
+                                end if;
                             else
                                 if (is_skip_v = true) then
                                     null;

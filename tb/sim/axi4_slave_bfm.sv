@@ -48,6 +48,7 @@ module axi4_slave_bfm #(
     bit         ready;
     logic [3:0] id;
     logic [17:0] addr;
+    logic [1:0]  burst;
     logic [8:0] beats_remaining;
     int unsigned delay_remaining;
     int unsigned order;
@@ -56,6 +57,7 @@ module axi4_slave_bfm #(
 
   logic [31:0] mem [0:MEM_DEPTH-1];
   logic [17:0] wr_addr_reg;
+  logic [1:0]  wr_burst_reg;
   int unsigned wr_delay;
   bit          wr_resp_pending;
   logic [3:0]  wr_resp_id;
@@ -67,6 +69,7 @@ module axi4_slave_bfm #(
   bit          rd_stream_active;
   logic [3:0]  rd_stream_id;
   logic [17:0] rd_stream_addr;
+  logic [1:0]  rd_stream_burst;
   logic [8:0]  rd_stream_beats_remaining;
   int unsigned rd_order_counter;
   int unsigned rd_ready_counter;
@@ -135,6 +138,7 @@ module axi4_slave_bfm #(
     rlast           = 1'b0;
     rvalid          = 1'b0;
     wr_addr_reg     = '0;
+    wr_burst_reg    = 2'b01;
     wr_delay        = 0;
     wr_resp_pending = 1'b0;
     wr_resp_id      = '0;
@@ -144,6 +148,7 @@ module axi4_slave_bfm #(
     rd_stream_active = 1'b0;
     rd_stream_id     = '0;
     rd_stream_addr   = '0;
+    rd_stream_burst  = 2'b01;
     rd_stream_beats_remaining = '0;
     rd_order_counter = 0;
     rd_ready_counter = 0;
@@ -155,6 +160,7 @@ module axi4_slave_bfm #(
       rd_pending[idx].ready           = 1'b0;
       rd_pending[idx].id              = '0;
       rd_pending[idx].addr            = '0;
+      rd_pending[idx].burst           = 2'b01;
       rd_pending[idx].beats_remaining = '0;
       rd_pending[idx].delay_remaining = 0;
       rd_pending[idx].order           = 0;
@@ -178,6 +184,7 @@ module axi4_slave_bfm #(
       rd_stream_active   <= 1'b0;
       rd_stream_id       <= '0;
       rd_stream_addr     <= '0;
+      rd_stream_burst    <= 2'b01;
       rd_stream_beats_remaining <= '0;
       rd_order_counter   <= 0;
       rd_ready_counter   <= 0;
@@ -186,6 +193,7 @@ module axi4_slave_bfm #(
         rd_pending[idx].ready           <= 1'b0;
         rd_pending[idx].id              <= '0;
         rd_pending[idx].addr            <= '0;
+        rd_pending[idx].burst           <= 2'b01;
         rd_pending[idx].beats_remaining <= '0;
         rd_pending[idx].delay_remaining <= 0;
         rd_pending[idx].order           <= 0;
@@ -204,13 +212,16 @@ module axi4_slave_bfm #(
       arready <= (free_slot >= 0);
 
       if (awvalid && awready) begin
-        wr_addr_reg <= awaddr;
-        wr_resp_id  <= awid;
+        wr_addr_reg  <= awaddr;
+        wr_burst_reg <= awburst;
+        wr_resp_id   <= awid;
       end
 
       if (wvalid && wready) begin
         mem[wr_addr_reg % MEM_DEPTH] <= wdata;
-        wr_addr_reg                  <= wr_addr_reg + 1;
+        if (wr_burst_reg == 2'b01) begin
+          wr_addr_reg <= wr_addr_reg + 1;
+        end
         if (wlast) begin
           if (inject_decode_error) begin
             wr_resp_code <= 2'b11;
@@ -259,6 +270,7 @@ module axi4_slave_bfm #(
         rd_pending[free_slot].ready           <= 1'b0;
         rd_pending[free_slot].id              <= arid;
         rd_pending[free_slot].addr            <= araddr;
+        rd_pending[free_slot].burst           <= arburst;
         rd_pending[free_slot].beats_remaining <= {1'b0, arlen} + 9'd1;
         rd_pending[free_slot].delay_remaining <= rd_latency_override[araddr % MEM_DEPTH];
         rd_pending[free_slot].order           <= rd_order_counter;
@@ -285,11 +297,13 @@ module axi4_slave_bfm #(
           rd_stream_active                 <= 1'b1;
           rd_stream_id                     <= rd_pending[ready_slot].id;
           rd_stream_addr                   <= rd_pending[ready_slot].addr;
+          rd_stream_burst                  <= rd_pending[ready_slot].burst;
           rd_stream_beats_remaining        <= rd_pending[ready_slot].beats_remaining;
           rd_pending[ready_slot].valid     <= 1'b0;
           rd_pending[ready_slot].ready     <= 1'b0;
           rd_pending[ready_slot].id        <= '0;
           rd_pending[ready_slot].addr      <= '0;
+          rd_pending[ready_slot].burst     <= 2'b01;
           rd_pending[ready_slot].beats_remaining <= '0;
           rd_pending[ready_slot].delay_remaining <= 0;
           rd_pending[ready_slot].order     <= 0;
@@ -313,7 +327,9 @@ module axi4_slave_bfm #(
           rd_stream_active          <= 1'b0;
           rd_stream_beats_remaining <= '0;
         end else begin
-          rd_stream_addr            <= rd_stream_addr + 1;
+          if (rd_stream_burst == 2'b01) begin
+            rd_stream_addr <= rd_stream_addr + 1;
+          end
           rd_stream_beats_remaining <= rd_stream_beats_remaining - 1;
         end
       end else if (rvalid && rready) begin

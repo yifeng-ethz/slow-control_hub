@@ -18,8 +18,10 @@ class sc_hub_ord_checker_uvm extends uvm_component;
   int unsigned cmd_seen_count;
   int unsigned bus_violation_count;
 
-  int unsigned last_order_epoch [0:15];
-  bit         domain_seen      [0:15];
+  int unsigned cmd_last_order_epoch [0:15];
+  int unsigned bus_last_order_epoch [0:15];
+  bit          cmd_domain_seen      [0:15];
+  bit          bus_domain_seen      [0:15];
 
   int unsigned cmd_without_meta_ooo;
   int unsigned force_ooo_missing_bus_mark;
@@ -51,8 +53,10 @@ class sc_hub_ord_checker_uvm extends uvm_component;
     force_ooo_missing_bus_mark = 0;
 
     for (int unsigned idx = 0; idx < 16; idx++) begin
-      last_order_epoch[idx] = 0;
-      domain_seen[idx]      = 1'b0;
+      cmd_last_order_epoch[idx] = 0;
+      bus_last_order_epoch[idx] = 0;
+      cmd_domain_seen[idx]      = 1'b0;
+      bus_domain_seen[idx]      = 1'b0;
     end
   endfunction
 
@@ -69,19 +73,19 @@ class sc_hub_ord_checker_uvm extends uvm_component;
         `uvm_error(get_type_name(), $sformatf("Unsupported order mode for ordered cmd: %0d", req_h.order_mode));
       end
       if (cfg.check_order_epoch_monotonic &&
-          req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
+          req_h.order_epoch < cmd_last_order_epoch[req_h.order_domain]) begin
         order_violation_count++;
         `uvm_error(get_type_name(),
                    $sformatf("Ordering epoch regression on domain %0d: last=%0d now=%0d",
-                             req_h.order_domain, last_order_epoch[req_h.order_domain], req_h.order_epoch));
+                             req_h.order_domain, cmd_last_order_epoch[req_h.order_domain], req_h.order_epoch));
       end
       if (req_h.order_mode == SC_ORDER_RELEASE) begin
         release_seen_count++;
       end else if (req_h.order_mode == SC_ORDER_ACQUIRE) begin
         acquire_seen_count++;
       end
-      domain_seen[req_h.order_domain] = 1'b1;
-      last_order_epoch[req_h.order_domain] = req_h.order_epoch;
+      cmd_domain_seen[req_h.order_domain] = 1'b1;
+      cmd_last_order_epoch[req_h.order_domain] = req_h.order_epoch;
       return;
     end
 
@@ -111,10 +115,6 @@ class sc_hub_ord_checker_uvm extends uvm_component;
       `uvm_warning(get_type_name(), $sformatf("Atomic mode present without atomic flag for %s", req_h.get_name()));
     end
 
-    if (req_h.atomic_id > 16'h0FFF) begin
-      atomic_violation_count++;
-      `uvm_warning(get_type_name(), $sformatf("Atomic id too wide for checker model: %0d", req_h.atomic_id));
-    end
   endfunction
 
   function void write_cmd(sc_pkt_seq_item req_h);
@@ -168,14 +168,14 @@ class sc_hub_ord_checker_uvm extends uvm_component;
 
         if (req_h.order_mode != SC_ORDER_RELAXED) begin
           if (cfg.check_order_epoch_monotonic &&
-              req_h.order_epoch < last_order_epoch[req_h.order_domain]) begin
+              req_h.order_epoch < bus_last_order_epoch[req_h.order_domain]) begin
             order_violation_count++;
             `uvm_error(get_type_name(),
                        $sformatf("Bus txn ordering epoch regression domain=%0d last=%0d now=%0d",
-                                 req_h.order_domain, last_order_epoch[req_h.order_domain], req_h.order_epoch));
+                                 req_h.order_domain, bus_last_order_epoch[req_h.order_domain], req_h.order_epoch));
           end
-          last_order_epoch[req_h.order_domain] = req_h.order_epoch;
-          domain_seen[req_h.order_domain] = 1'b1;
+          bus_last_order_epoch[req_h.order_domain] = req_h.order_epoch;
+          bus_domain_seen[req_h.order_domain] = 1'b1;
         end
       end
 
@@ -190,9 +190,6 @@ class sc_hub_ord_checker_uvm extends uvm_component;
         atomic_violation_count++;
         `uvm_warning(get_type_name(), $sformatf("Atomic id present with SC_ATOMIC_DISABLED: %0d", req_h.atomic_id));
       end
-    end else if (req_h.atomic_id > 16'h0FFF) begin
-      atomic_violation_count++;
-      `uvm_warning(get_type_name(), $sformatf("Bus txn atomic id too wide: %0d", req_h.atomic_id));
     end
   endfunction
 

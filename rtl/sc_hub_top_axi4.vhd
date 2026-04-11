@@ -1,10 +1,10 @@
 -- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.5.0
+-- Version : 26.6.1
 -- Date    : 20260411
--- Change  : Standard CSR identity header (UID + META mux at words 0-1).
---           Pass identity generics through to sc_hub_axi4_core.
+-- Change  : Release-align the AXI4 wrapper to v26.6.1 and keep the exported
+--           identity defaults consistent with the documented protocol support.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -30,8 +30,8 @@ entity sc_hub_top_axi4 is
         -- Identity generics (standard CSR header at words 0-1)
         IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR              : natural := 26;
-        VERSION_MINOR              : natural := 5;
-        VERSION_PATCH              : natural := 0;
+        VERSION_MINOR              : natural := 6;
+        VERSION_PATCH              : natural := 1;
         BUILD                      : natural := 16#0411#;
         VERSION_DATE               : natural := 16#20260411#;
         VERSION_GIT                : natural := 0;
@@ -120,6 +120,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_rd_cmd_valid        : std_logic;
     signal bus_rd_cmd_address      : std_logic_vector(17 downto 0);
     signal bus_rd_cmd_length       : std_logic_vector(15 downto 0);
+    signal bus_rd_cmd_nonincrement : std_logic;
     signal bus_rd_cmd_tag          : std_logic_vector(3 downto 0);
     signal bus_rd_cmd_lock         : std_logic;
     signal bus_rd_cmd_ready        : std_logic;
@@ -133,6 +134,7 @@ architecture rtl of sc_hub_top_axi4 is
     signal bus_wr_cmd_valid        : std_logic;
     signal bus_wr_cmd_address      : std_logic_vector(17 downto 0);
     signal bus_wr_cmd_length       : std_logic_vector(15 downto 0);
+    signal bus_wr_cmd_nonincrement : std_logic;
     signal bus_wr_cmd_lock         : std_logic;
     signal bus_wr_cmd_ready        : std_logic;
     signal bus_wr_done             : std_logic;
@@ -291,6 +293,7 @@ begin
         o_bus_rd_cmd_valid       => bus_rd_cmd_valid,
         o_bus_rd_cmd_address     => bus_rd_cmd_address,
         o_bus_rd_cmd_length      => bus_rd_cmd_length,
+        o_bus_rd_cmd_nonincrement => bus_rd_cmd_nonincrement,
         o_bus_rd_cmd_tag         => bus_rd_cmd_tag,
         o_bus_rd_cmd_lock        => bus_rd_cmd_lock,
         i_bus_rd_cmd_ready       => bus_rd_cmd_ready,
@@ -304,6 +307,7 @@ begin
         o_bus_wr_cmd_valid       => bus_wr_cmd_valid,
         o_bus_wr_cmd_address     => bus_wr_cmd_address,
         o_bus_wr_cmd_length      => bus_wr_cmd_length,
+        o_bus_wr_cmd_nonincrement => bus_wr_cmd_nonincrement,
         o_bus_wr_cmd_lock        => bus_wr_cmd_lock,
         i_bus_wr_cmd_ready       => bus_wr_cmd_ready,
         o_bus_wr_data_valid      => bus_wr_data_valid,
@@ -330,6 +334,7 @@ begin
         o_rd_cmd_ready     => bus_rd_cmd_ready,
         i_rd_cmd_address   => bus_rd_cmd_address,
         i_rd_cmd_length    => bus_rd_cmd_length,
+        i_rd_cmd_nonincrement => bus_rd_cmd_nonincrement,
         i_rd_cmd_tag       => bus_rd_cmd_tag,
         i_rd_cmd_lock      => bus_rd_cmd_lock,
         o_rd_data_valid    => bus_rd_data_valid,
@@ -343,6 +348,7 @@ begin
         o_wr_cmd_ready     => bus_wr_cmd_ready,
         i_wr_cmd_address   => bus_wr_cmd_address,
         i_wr_cmd_length    => bus_wr_cmd_length,
+        i_wr_cmd_nonincrement => bus_wr_cmd_nonincrement,
         i_wr_cmd_lock      => bus_wr_cmd_lock,
         i_wr_data_valid    => bus_wr_data_valid,
         i_wr_data          => bus_wr_data,

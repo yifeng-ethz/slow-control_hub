@@ -17,8 +17,9 @@ module sc_hub_tb_top;
   localparam int unsigned HUB_CSR_WO_EXT_PKT_WR_CONST    = 16'h010;
   localparam int unsigned HUB_CSR_WO_EXT_WORD_RD_CONST   = 16'h011;
   localparam int unsigned HUB_CSR_WO_EXT_WORD_WR_CONST   = 16'h012;
+  localparam int unsigned HUB_CSR_WO_FEB_TYPE_CONST      = 16'h01C;
   localparam logic [31:0] HUB_UID_CONST                  = 32'h5343_4842;
-  localparam logic [31:0] HUB_VERSION_CONST              = {8'd26, 8'd5, 4'd0, 12'd411};
+  localparam logic [31:0] HUB_VERSION_CONST              = {8'd26, 8'd6, 4'd1, 12'd411};
 
   logic clk;
   logic rst;
@@ -262,19 +263,18 @@ module sc_hub_tb_top;
     if (reply.order_mode !== expected_order_mode ||
         reply.order_domain !== expected_order_domain ||
         reply.order_epoch !== expected_order_epoch ||
-        reply.order_scope !== expected_order_scope ||
         reply.atomic !== expected_atomic) begin
-      $error("sc_hub_tb_top: reply metadata mismatch mode=%0b/%0b dom=%0h/%0h epoch=0x%0h/0x%0h scope=%0b/%0b atomic=%0b/%0b",
+      $error("sc_hub_tb_top: reply metadata mismatch mode=%0b/%0b dom=%0h/%0h epoch=0x%0h/0x%0h atomic=%0b/%0b (scope exp=%0b act=%0b not echoed in reply)",
              reply.order_mode,
              expected_order_mode,
              reply.order_domain,
              expected_order_domain,
              reply.order_epoch,
              expected_order_epoch,
-             reply.order_scope,
-             expected_order_scope,
              reply.atomic,
-             expected_atomic);
+             expected_atomic,
+             expected_order_scope,
+             reply.order_scope);
     end
   endtask
 
@@ -328,6 +328,27 @@ module sc_hub_tb_top;
                idx,
                expected_bus_word(expected_start_address, idx),
                reply.payload[idx]);
+      end
+    end
+  endtask
+
+  task automatic expect_nonincrementing_read_reply(
+    input sc_reply_t    reply,
+    input logic [23:0]  expected_start_address,
+    input int unsigned  expected_words
+  );
+    logic [31:0] expected_word;
+
+    expected_word = expected_bus_word(expected_start_address, 0);
+    expect_reply_header_ok(reply, expected_start_address, expected_words);
+    if (reply.payload_words != expected_words) begin
+      $error("sc_hub_tb_top: nonincrementing payload count mismatch exp=%0d act=%0d",
+             expected_words, reply.payload_words);
+    end
+    for (int unsigned idx = 0; idx < expected_words; idx++) begin
+      if (reply.payload[idx] !== expected_word) begin
+        $error("sc_hub_tb_top: nonincrementing payload[%0d] mismatch exp=0x%08h act=0x%08h",
+               idx, expected_word, reply.payload[idx]);
       end
     end
   endtask
@@ -386,6 +407,10 @@ module sc_hub_tb_top;
     driver_inst.send_write(csr_addr(word_offset), 1, wr_words);
     monitor_inst.wait_reply(captured_reply);
     expect_write_reply(captured_reply, csr_addr(word_offset), 1);
+  endtask
+
+  task automatic set_local_feb_type(input feb_type_e feb_type);
+    write_csr_word(HUB_CSR_WO_FEB_TYPE_CONST, {30'h0, feb_type});
   endtask
 
   task automatic send_swb_style_cmd(
@@ -819,6 +844,47 @@ module sc_hub_tb_top;
   endtask
 
   task automatic report_sc_debug_state(input string context_name);
+`ifdef SC_HUB_BUS_AXI4
+    $display("sc_hub_tb_top: %s rx_state=%0d pkt_in_progress=%0b pkt_valid=%0b rx_ready=%0b core_rx_ready=%0b accept_new=%0b link_ready=%0b rx_q=%0d enqueue=%0d payload_grant=%0b payload_words=%0d dl_fifo=%0d pending=%0d pending_ext=%0d dispatch_valid=%0b dispatch_idx=%0d core_state=%0d bus_cmd_issued=%0b bus_cmd_pulse=%0b bus_cmd_ready=%0b bus_done=%0b bus_timeout=%0b reply_words=%0d tx_reply_ready_q=%0b tx_reply_start=%0b tx_reply_done=%0b tx_pkt_q=%0d seen_replies=%0d ext_pkt_rd=%0d ext_word_rd=%0d last_rd_addr=0x%08h last_rd_data=0x%08h ext_pkt_wr=%0d ext_word_wr=%0d last_wr_addr=0x%08h last_wr_data=0x%08h pkt_drop=%0d",
+             context_name,
+             dut_inst.pkt_rx_inst.rx_state,
+             dut_inst.pkt_in_progress,
+             dut_inst.pkt_valid,
+             dut_inst.rx_ready,
+             dut_inst.core_rx_ready,
+             dut_inst.accept_new_pkt_int,
+             link_ready,
+             dut_inst.pkt_rx_inst.pkt_queue_count,
+             dut_inst.pkt_rx_inst.enqueue_stage_count,
+             dut_inst.pkt_rx_inst.payload_space_granted,
+             dut_inst.pkt_rx_inst.payload_check_words,
+             dut_inst.dl_fifo_usedw,
+             0,
+             0,
+             1'b0,
+             0,
+             0,
+             1'b0,
+             1'b0,
+             (dut_inst.bus_rd_cmd_ready || dut_inst.bus_wr_cmd_ready),
+             (dut_inst.bus_rd_done || dut_inst.bus_wr_done),
+             (dut_inst.bus_rd_timeout_pulse || dut_inst.bus_wr_timeout_pulse),
+             1'b0,
+             1'b0,
+             dut_inst.tx_reply_start,
+             dut_inst.tx_reply_done,
+             dut_inst.pkt_tx_inst.pkt_count,
+             monitor_inst.reply_seen_count,
+             dut_inst.core_inst.ext_pkt_read_count,
+             dut_inst.core_inst.ext_word_read_count,
+             dut_inst.core_inst.last_ext_read_addr,
+             dut_inst.core_inst.last_ext_read_data,
+             dut_inst.core_inst.ext_pkt_write_count,
+             dut_inst.core_inst.ext_word_write_count,
+             dut_inst.core_inst.last_ext_write_addr,
+             dut_inst.core_inst.last_ext_write_data,
+             dut_inst.pkt_rx_inst.pkt_drop_count);
+`else
     $display("sc_hub_tb_top: %s rx_state=%0d pkt_in_progress=%0b pkt_valid=%0b rx_ready=%0b core_rx_ready=%0b accept_new=%0b link_ready=%0b rx_q=%0d enqueue=%0d payload_grant=%0b payload_words=%0d dl_fifo=%0d pending=%0d pending_ext=%0d dispatch_valid=%0b dispatch_idx=%0d core_state=%0d bus_cmd_issued=%0b bus_cmd_pulse=%0b bus_cmd_ready=%0b bus_done=%0b bus_timeout=%0b reply_arm=%0b tx_reply_ready_q=%0b tx_reply_start=%0b tx_reply_done=%0b tx_pkt_q=%0d seen_replies=%0d ext_pkt_rd=%0d ext_word_rd=%0d last_rd_addr=0x%08h last_rd_data=0x%08h ext_pkt_wr=%0d ext_word_wr=%0d last_wr_addr=0x%08h last_wr_data=0x%08h pkt_drop=%0d",
              context_name,
              dut_inst.pkt_rx_inst.rx_state,
@@ -843,7 +909,7 @@ module sc_hub_tb_top;
              dut_inst.bus_cmd_ready,
              dut_inst.bus_done,
              dut_inst.bus_timeout_pulse,
-             dut_inst.core_inst.reply_arm_pending,
+             dut_inst.core_inst.reply_words_remaining,
              dut_inst.core_inst.tx_reply_ready_q,
              dut_inst.tx_reply_start,
              dut_inst.tx_reply_done,
@@ -858,6 +924,7 @@ module sc_hub_tb_top;
              dut_inst.core_inst.last_ext_write_addr,
              dut_inst.core_inst.last_ext_write_data,
              dut_inst.pkt_rx_inst.pkt_drop_count);
+`endif
   endtask
 
   task automatic run_t001();
@@ -3532,6 +3599,157 @@ module sc_hub_tb_top;
     monitor_inst.wait_reply(captured_reply);
     expect_read_reply(captured_reply, 24'h000545, 1);
   endtask
+
+  task automatic run_t089();
+    logic [31:0] csr_word;
+    sc_cmd_t     cmd;
+
+    clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
+    cmd = make_cmd(SC_READ, 24'h001200, 1);
+    cmd.mask_s = 1'b1;
+    send_cmd(cmd);
+    monitor_inst.assert_no_reply(400ns);
+    read_csr_word(16'h00F, csr_word);
+    if (csr_word !== 32'd0) begin
+      $error("sc_hub_tb_top: local SciFi mute should ignore read exp EXT_PKT_RD=0 act=%0d",
+             csr_word);
+    end
+  endtask
+
+  task automatic run_t090();
+    logic [31:0] csr_word;
+    sc_cmd_t     cmd;
+
+    clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
+    cmd = make_cmd(SC_WRITE, 24'h001220, 1);
+    cmd.mask_r        = 1'b1;
+    cmd.data_words[0] = 32'h9000_0001;
+    send_cmd(cmd);
+    wait (axi_bvalid === 1'b1);
+    wait_clks(2);
+    monitor_inst.assert_no_reply(400ns);
+    if (axi4_bfm_inst.mem[18'h01220] !== 32'h9000_0001) begin
+      $error("sc_hub_tb_top: muted write did not update downstream AXI4 memory");
+    end
+    read_csr_word(16'h010, csr_word);
+    if (csr_word !== 32'd1) begin
+      $error("sc_hub_tb_top: muted mask_r write did not increment EXT_PKT_WR count exp=1 act=%0d",
+             csr_word);
+    end
+  endtask
+
+  task automatic run_t091();
+    logic [31:0] csr_word;
+    sc_cmd_t     cmd;
+
+    clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
+    cmd = make_cmd(SC_READ, 24'h001240, 1);
+    cmd.mask_m = 1'b1;
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001240, 1);
+    read_csr_word(16'h00F, csr_word);
+    if (csr_word !== 32'd1) begin
+      $error("sc_hub_tb_top: non-local M mask should still execute read exp EXT_PKT_RD=1 act=%0d",
+             csr_word);
+    end
+  endtask
+
+  task automatic run_t092();
+    logic [31:0] csr_word;
+    sc_cmd_t     cmd;
+
+    clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
+    cmd = make_cmd(SC_READ, 24'h001260, 1);
+    cmd.mask_t = 1'b1;
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001260, 1);
+    read_csr_word(16'h00F, csr_word);
+    if (csr_word !== 32'd1) begin
+      $error("sc_hub_tb_top: non-local T mask should still execute read exp EXT_PKT_RD=1 act=%0d",
+             csr_word);
+    end
+  endtask
+
+  task automatic run_t093();
+    sc_cmd_t cmd;
+
+    set_local_feb_type(FEB_TYPE_SCIFI);
+    cmd = make_cmd(SC_READ, 24'h001280, 1);
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001280, 1);
+  endtask
+
+  task automatic run_t094();
+    logic [31:0] csr_word;
+    sc_cmd_t     cmd;
+
+    clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
+
+    cmd = make_cmd(SC_READ, 24'h0012A0, 1);
+    cmd.mask_s = 1'b1;
+    send_cmd(cmd);
+    monitor_inst.assert_no_reply(400ns);
+
+    cmd.mask_s = 1'b0;
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h0012A0, 1);
+    monitor_inst.assert_no_reply(400ns);
+
+    read_csr_word(16'h00F, csr_word);
+    if (csr_word !== 32'd1) begin
+      $error("sc_hub_tb_top: local mute should suppress execution, only unmuted read should count exp=1 act=%0d",
+             csr_word);
+    end
+  endtask
+
+  task automatic run_t129();
+    sc_cmd_t cmd;
+
+    cmd = make_cmd(SC_READ_NONINCREMENTING, 24'h0013C0, 4);
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h0013C0, 4);
+    if (captured_reply.sc_type !== SC_READ_NONINCREMENTING) begin
+      $error("sc_hub_tb_top: nonincrementing read reply sc_type mismatch exp=%0d act=%0d",
+             SC_READ_NONINCREMENTING, captured_reply.sc_type);
+    end
+  endtask
+
+  task automatic run_t130();
+    logic [31:0] wr_words[$];
+    logic [31:0] next_addr_before;
+    sc_cmd_t     cmd;
+
+    next_addr_before = axi4_bfm_inst.mem[18'h013E1];
+    fill_write_words(wr_words, 4, 32'hA110_0000);
+    cmd = make_cmd(SC_WRITE_NONINCREMENTING, 24'h0013E0, 4);
+    foreach (cmd.data_words[idx]) begin
+      if (idx < wr_words.size()) begin
+        cmd.data_words[idx] = wr_words[idx];
+      end
+    end
+
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_write_reply(captured_reply, 24'h0013E0, 4);
+    if (axi4_bfm_inst.mem[18'h013E0] !== wr_words[wr_words.size() - 1]) begin
+      $error("sc_hub_tb_top: nonincrementing write did not leave last word at fixed address exp=0x%08h act=0x%08h",
+             wr_words[wr_words.size() - 1], axi4_bfm_inst.mem[18'h013E0]);
+    end
+    if (axi4_bfm_inst.mem[18'h013E1] !== next_addr_before) begin
+      $error("sc_hub_tb_top: nonincrementing write incorrectly touched next address exp=0x%08h act=0x%08h",
+             next_addr_before, axi4_bfm_inst.mem[18'h013E1]);
+    end
+  endtask
 `endif
 
 `ifndef SC_HUB_BUS_AXI4
@@ -3764,13 +3982,14 @@ module sc_hub_tb_top;
     sc_cmd_t     cmd;
 
     clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
     cmd = make_cmd(SC_READ, 24'h001200, 1);
     cmd.mask_s = 1'b1;
     send_cmd(cmd);
     monitor_inst.assert_no_reply(400ns);
     read_csr_word(16'h00F, csr_word);
-    if (csr_word !== 32'd1) begin
-      $error("sc_hub_tb_top: muted mask_s read did not increment EXT_PKT_RD count exp=1 act=%0d",
+    if (csr_word !== 32'd0) begin
+      $error("sc_hub_tb_top: local SciFi mute should ignore read exp EXT_PKT_RD=0 act=%0d",
              csr_word);
     end
   endtask
@@ -3780,6 +3999,7 @@ module sc_hub_tb_top;
     sc_cmd_t     cmd;
 
     clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
     cmd = make_cmd(SC_WRITE, 24'h001220, 1);
     cmd.mask_r       = 1'b1;
     cmd.data_words[0] = 32'h9000_0001;
@@ -3802,13 +4022,15 @@ module sc_hub_tb_top;
     sc_cmd_t     cmd;
 
     clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
     cmd = make_cmd(SC_READ, 24'h001240, 1);
     cmd.mask_m = 1'b1;
     send_cmd(cmd);
-    monitor_inst.assert_no_reply(400ns);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001240, 1);
     read_csr_word(16'h00F, csr_word);
     if (csr_word !== 32'd1) begin
-      $error("sc_hub_tb_top: muted mask_m read did not increment EXT_PKT_RD count exp=1 act=%0d",
+      $error("sc_hub_tb_top: non-local M mask should still execute read exp EXT_PKT_RD=1 act=%0d",
              csr_word);
     end
   endtask
@@ -3818,13 +4040,15 @@ module sc_hub_tb_top;
     sc_cmd_t     cmd;
 
     clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
     cmd = make_cmd(SC_READ, 24'h001260, 1);
     cmd.mask_t = 1'b1;
     send_cmd(cmd);
-    monitor_inst.assert_no_reply(400ns);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001260, 1);
     read_csr_word(16'h00F, csr_word);
     if (csr_word !== 32'd1) begin
-      $error("sc_hub_tb_top: muted mask_t read did not increment EXT_PKT_RD count exp=1 act=%0d",
+      $error("sc_hub_tb_top: non-local T mask should still execute read exp EXT_PKT_RD=1 act=%0d",
              csr_word);
     end
   endtask
@@ -3832,10 +4056,11 @@ module sc_hub_tb_top;
   task automatic run_t093();
     sc_cmd_t cmd;
 
+    set_local_feb_type(FEB_TYPE_SCIFI);
     cmd = make_cmd(SC_READ, 24'h001280, 1);
     send_cmd(cmd);
     monitor_inst.wait_reply(captured_reply);
-    expect_read_reply(captured_reply, 24'h001280, 1);
+    expect_nonincrementing_read_reply(captured_reply, 24'h001280, 1);
   endtask
 
   task automatic run_t094();
@@ -3843,6 +4068,7 @@ module sc_hub_tb_top;
     sc_cmd_t     cmd;
 
     clear_hub_counters();
+    set_local_feb_type(FEB_TYPE_SCIFI);
 
     cmd = make_cmd(SC_READ, 24'h0012A0, 1);
     cmd.mask_s = 1'b1;
@@ -3852,12 +4078,12 @@ module sc_hub_tb_top;
     cmd.mask_s = 1'b0;
     send_cmd(cmd);
     monitor_inst.wait_reply(captured_reply);
-    expect_read_reply(captured_reply, 24'h0012A0, 1);
+    expect_nonincrementing_read_reply(captured_reply, 24'h0012A0, 1);
     monitor_inst.assert_no_reply(400ns);
 
     read_csr_word(16'h00F, csr_word);
-    if (csr_word !== 32'd2) begin
-      $error("sc_hub_tb_top: muted+unmuted read count mismatch exp=2 act=%0d", csr_word);
+    if (csr_word !== 32'd1) begin
+      $error("sc_hub_tb_top: local mute should suppress execution, only unmuted read should count exp=1 act=%0d", csr_word);
     end
   endtask
 
@@ -3986,6 +4212,63 @@ module sc_hub_tb_top;
              captured_reply.payload_words,
              captured_reply.payload[0]);
     end
+  endtask
+
+  task automatic run_t129();
+    sc_cmd_t cmd;
+
+    cmd = make_cmd(SC_READ_NONINCREMENTING, 24'h0013C0, 4);
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_nonincrementing_read_reply(captured_reply, 24'h0013C0, 4);
+    if (captured_reply.sc_type !== SC_READ_NONINCREMENTING) begin
+      $error("sc_hub_tb_top: nonincrementing read reply sc_type mismatch exp=%0d act=%0d",
+             SC_READ_NONINCREMENTING, captured_reply.sc_type);
+    end
+  endtask
+
+  task automatic run_t130();
+    logic [31:0] wr_words[$];
+    logic [31:0] next_addr_before;
+    sc_cmd_t     cmd;
+
+`ifdef SC_HUB_BUS_AXI4
+    next_addr_before = axi4_bfm_inst.mem[18'h013E1];
+`else
+    next_addr_before = avmm_bfm_inst.mem[18'h013E1];
+`endif
+
+    fill_write_words(wr_words, 4, 32'hA110_0000);
+    cmd = make_cmd(SC_WRITE_NONINCREMENTING, 24'h0013E0, 4);
+    foreach (cmd.data_words[idx]) begin
+      if (idx < wr_words.size()) begin
+        cmd.data_words[idx] = wr_words[idx];
+      end
+    end
+
+    send_cmd(cmd);
+    monitor_inst.wait_reply(captured_reply);
+    expect_write_reply(captured_reply, 24'h0013E0, 4);
+
+`ifdef SC_HUB_BUS_AXI4
+    if (axi4_bfm_inst.mem[18'h013E0] !== wr_words[wr_words.size() - 1]) begin
+      $error("sc_hub_tb_top: nonincrementing write did not leave last word at fixed address exp=0x%08h act=0x%08h",
+             wr_words[wr_words.size() - 1], axi4_bfm_inst.mem[18'h013E0]);
+    end
+    if (axi4_bfm_inst.mem[18'h013E1] !== next_addr_before) begin
+      $error("sc_hub_tb_top: nonincrementing write incorrectly touched next address exp=0x%08h act=0x%08h",
+             next_addr_before, axi4_bfm_inst.mem[18'h013E1]);
+    end
+`else
+    if (avmm_bfm_inst.mem[18'h013E0] !== wr_words[wr_words.size() - 1]) begin
+      $error("sc_hub_tb_top: nonincrementing write did not leave last word at fixed address exp=0x%08h act=0x%08h",
+             wr_words[wr_words.size() - 1], avmm_bfm_inst.mem[18'h013E0]);
+    end
+    if (avmm_bfm_inst.mem[18'h013E1] !== next_addr_before) begin
+      $error("sc_hub_tb_top: nonincrementing write incorrectly touched next address exp=0x%08h act=0x%08h",
+             next_addr_before, avmm_bfm_inst.mem[18'h013E1]);
+    end
+`endif
   endtask
 
   task automatic run_t102();
@@ -9015,6 +9298,30 @@ module sc_hub_tb_top;
       "T086": begin
         run_t086();
       end
+      "T089": begin
+        run_t089();
+      end
+      "T090": begin
+        run_t090();
+      end
+      "T091": begin
+        run_t091();
+      end
+      "T092": begin
+        run_t092();
+      end
+      "T093": begin
+        run_t093();
+      end
+      "T094": begin
+        run_t094();
+      end
+      "T129": begin
+        run_t129();
+      end
+      "T130": begin
+        run_t130();
+      end
       "T210": begin
         run_t210();
       end
@@ -9316,6 +9623,12 @@ module sc_hub_tb_top;
       end
       "T115": begin
         run_t115();
+      end
+      "T129": begin
+        run_t129();
+      end
+      "T130": begin
+        run_t130();
       end
       "T116": begin
         run_t116();

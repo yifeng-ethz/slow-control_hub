@@ -14,8 +14,8 @@ def read_text(path: pathlib.Path) -> str:
 
 def check_t548() -> int:
     top_files = [
-        ROOT / "sc_hub_top.vhd",
-        ROOT / "sc_hub_top_axi4.vhd",
+        ROOT / "rtl" / "sc_hub_top.vhd",
+        ROOT / "rtl" / "sc_hub_top_axi4.vhd",
     ]
     failures = []
 
@@ -42,7 +42,7 @@ def check_t548() -> int:
 
 
 def check_t549() -> int:
-    vhdl_files = list(ROOT.glob("*.vhd")) + list((ROOT / "fifo").glob("*.vhd"))
+    vhdl_files = list((ROOT / "rtl").glob("*.vhd")) + list((ROOT / "rtl" / "fifo").glob("*.vhd"))
     async_reset_paths = []
 
     for path in sorted(vhdl_files):

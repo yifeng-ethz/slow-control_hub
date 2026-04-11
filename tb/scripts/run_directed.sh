@@ -169,7 +169,7 @@ run_one() {
          "$run_count" "$test_name" "${BUS_TYPE:-AVALON}"
 
   case "$test_name" in
-    T123|T124|T125|T126|T127|T128|T3[0-4][0-9]|T350|T351|T352|T353|T354|T355)
+    T123|T124|T125|T126|T127|T128|T3[0-4][0-9]|T350|T351|T352|T353|T354|T355|T356|T357)
       if "$SCRIPT_DIR/run_uvm_case.sh" "$test_name"; then
         pass_count=$((pass_count + 1))
         echo "[PASS] ${test_name}"

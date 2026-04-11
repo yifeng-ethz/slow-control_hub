@@ -55,7 +55,7 @@ endclass
 class bus_slave_monitor_uvm extends uvm_monitor;
   `uvm_component_utils(bus_slave_monitor_uvm)
 
-  localparam int unsigned MAX_PENDING_CMDS = 64;
+  localparam int unsigned MAX_PENDING_CMDS = 4096;
 
   uvm_analysis_port #(sc_hub_bus_txn) bus_ap;
   uvm_analysis_imp_cmd #(sc_pkt_seq_item, bus_slave_monitor_uvm) cmd_ap;
@@ -102,9 +102,22 @@ class bus_slave_monitor_uvm extends uvm_monitor;
     endcase
   endfunction
 
+  function void enqueue_pending_cmd(sc_pkt_seq_item pending_cmd_h);
+    if (pending_cmd_h == null) begin
+      return;
+    end
+
+    pending_cmd_q.push_back(pending_cmd_h);
+    if (pending_cmd_q.size() > MAX_PENDING_CMDS) begin
+      void'(pending_cmd_q.pop_front());
+      pending_cmd_overflow_count++;
+    end
+  endfunction
+
   function void write_cmd(sc_pkt_seq_item req_h);
     sc_pkt_seq_item pending_cmd_h;
     sc_pkt_seq_item atomic_wr_cmd_h;
+    int unsigned    avmm_bus_txn_count;
 
     if (req_h == null) begin
       return;
@@ -114,17 +127,26 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       return;
     end
 
-    pending_cmd_h = req_h.clone_item("pending_cmd");
-    pending_cmd_q.push_back(pending_cmd_h);
+    avmm_bus_txn_count = 1;
+    if ((cfg.bus_type == SC_HUB_BUS_AVALON) &&
+        req_h.sc_type[1] &&
+        (req_h.rw_length > 1)) begin
+      avmm_bus_txn_count = req_h.rw_length;
+    end
+
+    for (int unsigned idx = 0; idx < avmm_bus_txn_count; idx++) begin
+      pending_cmd_h = req_h.clone_item($sformatf("pending_cmd_%0d", idx));
+      if (avmm_bus_txn_count > 1) begin
+        pending_cmd_h.rw_length = 1;
+      end
+      enqueue_pending_cmd(pending_cmd_h);
+    end
+
     if (req_h.has_atomic_meta()) begin
       atomic_wr_cmd_h = req_h.clone_item("pending_atomic_wr_cmd");
       atomic_wr_cmd_h.sc_type = SC_WRITE;
       atomic_wr_cmd_h.rw_length = 1;
-      pending_cmd_q.push_back(atomic_wr_cmd_h);
-    end
-    if (pending_cmd_q.size() > MAX_PENDING_CMDS) begin
-      void'(pending_cmd_q.pop_front());
-      pending_cmd_overflow_count++;
+      enqueue_pending_cmd(atomic_wr_cmd_h);
     end
   endfunction
 
@@ -163,13 +185,8 @@ class bus_slave_monitor_uvm extends uvm_monitor;
 
     if (candidate) begin
       out_of_order = (matched_idx != 0);
-      for (int unsigned idx = 0; idx <= matched_idx; idx++) begin
-        if (idx < matched_idx) begin
-          unmatched_cmd_queue_front();
-        end else begin
-          matched_cmd_h = pending_cmd_q.pop_front();
-        end
-      end
+      matched_cmd_h = pending_cmd_q[matched_idx];
+      pending_cmd_q.delete(matched_idx);
     end
 
     if (matched) begin
@@ -182,13 +199,6 @@ class bus_slave_monitor_uvm extends uvm_monitor;
     end
 
     return matched_cmd_h;
-  endfunction
-
-  function void unmatched_cmd_queue_front();
-    if (pending_cmd_q.size() > 0) begin
-      void'(pending_cmd_q.pop_front());
-      pending_cmd_overflow_count++;
-    end
   endfunction
 
   task sample_axi4_read();

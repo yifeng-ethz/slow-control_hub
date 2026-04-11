@@ -97,6 +97,15 @@ module sc_pkt_driver (
     send_sc_cmd(cmd, {});
   endtask
 
+  task automatic send_nonincrementing_read(
+    input logic [23:0] start_address,
+    input int unsigned rw_length
+  );
+    sc_cmd_t cmd;
+    cmd = make_cmd(SC_READ_NONINCREMENTING, start_address, rw_length);
+    send_sc_cmd(cmd, {});
+  endtask
+
   task automatic send_ordered_read(
     input logic [23:0] start_address,
     input int unsigned rw_length,
@@ -147,6 +156,16 @@ module sc_pkt_driver (
   );
     sc_cmd_t cmd;
     cmd = make_burst_cmd(SC_BURST_WRITE, start_address, rw_length);
+    send_sc_cmd(cmd, data_words);
+  endtask
+
+  task automatic send_nonincrementing_write(
+    input logic [23:0] start_address,
+    input int unsigned rw_length,
+    input logic [31:0] data_words []
+  );
+    sc_cmd_t cmd;
+    cmd = make_cmd(SC_WRITE_NONINCREMENTING, start_address, rw_length);
     send_sc_cmd(cmd, data_words);
   endtask
 
@@ -219,5 +238,25 @@ module sc_pkt_driver (
 
   task automatic send_raw(input logic [31:0] words [], input logic [3:0] dataks []);
     send_malformed(words, dataks);
+  endtask
+
+  task automatic send_swb_style_raw(
+    input logic [31:0] words [],
+    input logic [3:0]  dataks [],
+    input int unsigned interword_skip_cycles
+  );
+    logic [31:0] skip_word;
+
+    skip_word = {24'h0, K285_CONST};
+    for (int unsigned idx = 0; idx < words.size() && idx < dataks.size(); idx++) begin
+      drive_word_ignore_ready(words[idx], dataks[idx]);
+      if (idx + 1 < words.size()) begin
+        repeat (interword_skip_cycles) begin
+          drive_word_ignore_ready(skip_word, 4'b0001);
+        end
+      end
+    end
+
+    drive_word_ignore_ready(skip_word, 4'b0001);
   endtask
 endmodule

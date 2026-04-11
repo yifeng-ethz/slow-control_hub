@@ -28,7 +28,7 @@ module sc_hub_assertions (
   input logic        axi_rd_done,
   input logic [3:0]  axi_rd_done_tag,
   input logic [3:0]  axi_awid,
-  input logic [15:0] axi_awaddr,
+  input logic [17:0] axi_awaddr,
   input logic [7:0]  axi_awlen,
   input logic [2:0]  axi_awsize,
   input logic [1:0]  axi_awburst,
@@ -44,7 +44,7 @@ module sc_hub_assertions (
   input logic        axi_bvalid,
   input logic        axi_bready,
   input logic [3:0]  axi_arid,
-  input logic [15:0] axi_araddr,
+  input logic [17:0] axi_araddr,
   input logic [7:0]  axi_arlen,
   input logic [2:0]  axi_arsize,
   input logic [1:0]  axi_arburst,
@@ -165,9 +165,9 @@ module sc_hub_assertions (
   property reply_resp_header_fields_known;
     @(posedge clk) disable iff (rst)
       (uplink_valid && uplink_ready && (reply_word_index == 9'd2)) |->
-      (!$isunknown(uplink_data[17:16]) &&
-       !$isunknown(uplink_data[19:18]) &&
-       (uplink_data[19:18] != 2'b11));
+      (!$isunknown(uplink_data[19:16]) &&
+       (uplink_data[16] == 1'b1) &&
+       (uplink_data[19:18] != 2'b01));
   endproperty
 
   property no_eop_without_open_reply;
@@ -423,10 +423,11 @@ module sc_hub_assertions (
         axi_wlast === $past(axi_wlast));
   endproperty
 
-  property axi4_burst_type_incr;
+  property axi4_burst_type_supported;
     @(posedge clk) disable iff (rst)
       (axi4_aw_fire || axi4_ar_fire) |->
-      ((axi4_aw_fire && (axi_awburst == 2'b01)) || (axi4_ar_fire && (axi_arburst == 2'b01)));
+      ((axi4_aw_fire && ((axi_awburst == 2'b00) || (axi_awburst == 2'b01))) ||
+       (axi4_ar_fire && ((axi_arburst == 2'b00) || (axi_arburst == 2'b01))));
   endproperty
 
   property axi4_size_4byte;
@@ -464,8 +465,8 @@ module sc_hub_assertions (
   assert property (axi4_wvalid_stable)
     else $error("sc_hub_assertions: W channel changed while WREADY was low");
 
-  assert property (axi4_burst_type_incr)
-    else $error("sc_hub_assertions: AXI burst type is not INCR");
+  assert property (axi4_burst_type_supported)
+    else $error("sc_hub_assertions: AXI burst type is neither FIXED nor INCR");
 
   assert property (axi4_size_4byte)
     else $error("sc_hub_assertions: AXI beat size is not 4-byte");

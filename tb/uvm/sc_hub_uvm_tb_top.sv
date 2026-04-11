@@ -94,6 +94,15 @@ module sc_hub_uvm_tb_top;
   sc_pkt_if   sc_pkt_vif   (clk);
   sc_reply_if sc_reply_vif (clk);
 
+  logic [4:0]  avs_csr_address;
+  logic        avs_csr_read;
+  logic        avs_csr_write;
+  logic [31:0] avs_csr_writedata;
+  logic [31:0] avs_csr_readdata;
+  logic        avs_csr_readdatavalid;
+  logic        avs_csr_waitrequest;
+  logic        avs_csr_burstcount;
+
 `ifdef SC_HUB_BUS_AXI4
   sc_hub_axi4_if bus_vif(clk);
   sc_hub_avmm_if aux_avmm_vif(clk);
@@ -288,6 +297,11 @@ module sc_hub_uvm_tb_top;
     sc_reply_vif.ready    = 1'b1;
     sc_pkt_vif.data       = '0;
     sc_pkt_vif.datak      = '0;
+    avs_csr_address       = '0;
+    avs_csr_read          = 1'b0;
+    avs_csr_write         = 1'b0;
+    avs_csr_writedata     = '0;
+    avs_csr_burstcount    = 1'b0;
 `ifdef SC_HUB_BUS_AXI4
     bus_vif.inject_rresp_err = 1'b0;
     bus_vif.inject_bresp_err = 1'b0;
@@ -605,7 +619,15 @@ module sc_hub_uvm_tb_top;
     .avm_hub_writedata          (bus_vif.writedata),
     .avm_hub_waitrequest        (bus_vif.waitrequest),
     .avm_hub_readdatavalid      (bus_vif.readdatavalid),
-    .avm_hub_burstcount         (bus_vif.burstcount)
+    .avm_hub_burstcount         (bus_vif.burstcount),
+    .avs_csr_address            (avs_csr_address),
+    .avs_csr_read               (avs_csr_read),
+    .avs_csr_write              (avs_csr_write),
+    .avs_csr_writedata          (avs_csr_writedata),
+    .avs_csr_readdata           (avs_csr_readdata),
+    .avs_csr_readdatavalid      (avs_csr_readdatavalid),
+    .avs_csr_waitrequest        (avs_csr_waitrequest),
+    .avs_csr_burstcount         (avs_csr_burstcount)
   );
 
   avmm_slave_bfm avmm_bfm_inst (

@@ -1,5 +1,5 @@
 # ============================================================================
-# sc_hub "Slow Control Hub" v26.5.0.0411
+# sc_hub "Slow Control Hub" v26.6.1.0411
 # Yifeng Wang 2026.04.11
 #
 # Compatibility-facing Platform Designer wrapper around the canonical sc_hub v2
@@ -12,8 +12,8 @@ set sc_hub_hw_dir [file dirname [file normalize [info script]]]
 
 set SC_HUB_IP_UID_DEFAULT_CONST        [expr {0x53434842}] ;# ASCII "SCHB"
 set SC_HUB_VERSION_MAJOR_DEFAULT_CONST 26
-set SC_HUB_VERSION_MINOR_DEFAULT_CONST 5
-set SC_HUB_VERSION_PATCH_DEFAULT_CONST 0
+set SC_HUB_VERSION_MINOR_DEFAULT_CONST 6
+set SC_HUB_VERSION_PATCH_DEFAULT_CONST 1
 set SC_HUB_BUILD_DEFAULT_CONST         411
 set SC_HUB_VERSION_DATE_DEFAULT_CONST  20260411
 set SC_HUB_VERSION_GIT_DEFAULT_CONST   0
@@ -29,7 +29,7 @@ if {![catch {
 
 set_module_property NAME sc_hub
 set_module_property DISPLAY_NAME "Slow Control Hub Mu3E IP"
-set_module_property VERSION 26.5.0.0411
+set_module_property VERSION 26.6.1.0411
 set_module_property DESCRIPTION "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP "Mu3e Control Plane/Modules"
 set_module_property AUTHOR "Yifeng Wang"
@@ -101,6 +101,7 @@ set CSR_TABLE_HTML {<html><table border="1" cellpadding="3" width="100%">
 <tr><td>0x19</td><td>ORD_DRAIN_CNT</td><td>RO</td><td>Release drain event counter.</td></tr>
 <tr><td>0x1A</td><td>ORD_HOLD_CNT</td><td>RO</td><td>Acquire hold event counter.</td></tr>
 <tr><td>0x1B</td><td>DBG_DROP_DETAIL</td><td>RO</td><td>Last dropped-packet debug detail word.</td></tr>
+<tr><td>0x1C</td><td>FEB_TYPE</td><td>RW</td><td>Local detector-class selector used by M/S/T packet masking: 0=ALL, 1=MUPIX, 2=SCIFI, 3=TILE.</td></tr>
 <tr><td>0x1F</td><td>HUB_CAP</td><td>RO</td><td>Compile-time capability bits and identity-header presence.</td></tr>
 </table></html>}
 
@@ -318,20 +319,20 @@ add_fileset QUARTUS_SYNTH QUARTUS_SYNTH "" ""
 set_fileset_property QUARTUS_SYNTH TOP_LEVEL sc_hub_top
 set_fileset_property QUARTUS_SYNTH ENABLE_RELATIVE_INCLUDE_PATHS false
 set_fileset_property QUARTUS_SYNTH ENABLE_FILE_OVERWRITE_MODE false
-add_fileset_file sc_hub_pkg.vhd VHDL PATH sc_hub_pkg.vhd
-add_fileset_file fifo/sc_hub_fifo_sc.vhd VHDL PATH fifo/sc_hub_fifo_sc.vhd
-add_fileset_file fifo/sc_hub_fifo_sf.vhd VHDL PATH fifo/sc_hub_fifo_sf.vhd
-add_fileset_file fifo/sc_hub_fifo_bp.vhd VHDL PATH fifo/sc_hub_fifo_bp.vhd
-add_fileset_file sc_hub_pkt_rx.vhd VHDL PATH sc_hub_pkt_rx.vhd
-add_fileset_file sc_hub_pkt_tx.vhd VHDL PATH sc_hub_pkt_tx.vhd
-add_fileset_file sc_hub_core.vhd VHDL PATH sc_hub_core.vhd
-add_fileset_file sc_hub_avmm_handler.vhd VHDL PATH sc_hub_avmm_handler.vhd
-add_fileset_file sc_hub_payload_ram.vhd VHDL PATH sc_hub_payload_ram.vhd
-add_fileset_file sc_hub_axi4_handler.vhd VHDL PATH sc_hub_axi4_handler.vhd
-add_fileset_file sc_hub_axi4_core.vhd VHDL PATH sc_hub_axi4_core.vhd
-add_fileset_file sc_hub_axi4_ooo_handler.vhd VHDL PATH sc_hub_axi4_ooo_handler.vhd
-add_fileset_file sc_hub_top.vhd VHDL PATH sc_hub_top.vhd TOP_LEVEL_FILE
-add_fileset_file sc_hub_top_axi4.vhd VHDL PATH sc_hub_top_axi4.vhd
+add_fileset_file rtl/sc_hub_pkg.vhd VHDL PATH rtl/sc_hub_pkg.vhd
+add_fileset_file rtl/fifo/sc_hub_fifo_sc.vhd VHDL PATH rtl/fifo/sc_hub_fifo_sc.vhd
+add_fileset_file rtl/fifo/sc_hub_fifo_sf.vhd VHDL PATH rtl/fifo/sc_hub_fifo_sf.vhd
+add_fileset_file rtl/fifo/sc_hub_fifo_bp.vhd VHDL PATH rtl/fifo/sc_hub_fifo_bp.vhd
+add_fileset_file rtl/sc_hub_pkt_rx.vhd VHDL PATH rtl/sc_hub_pkt_rx.vhd
+add_fileset_file rtl/sc_hub_pkt_tx.vhd VHDL PATH rtl/sc_hub_pkt_tx.vhd
+add_fileset_file rtl/sc_hub_core.vhd VHDL PATH rtl/sc_hub_core.vhd
+add_fileset_file rtl/sc_hub_avmm_handler.vhd VHDL PATH rtl/sc_hub_avmm_handler.vhd
+add_fileset_file rtl/sc_hub_payload_ram.vhd VHDL PATH rtl/sc_hub_payload_ram.vhd
+add_fileset_file rtl/sc_hub_axi4_handler.vhd VHDL PATH rtl/sc_hub_axi4_handler.vhd
+add_fileset_file rtl/sc_hub_axi4_core.vhd VHDL PATH rtl/sc_hub_axi4_core.vhd
+add_fileset_file rtl/sc_hub_axi4_ooo_handler.vhd VHDL PATH rtl/sc_hub_axi4_ooo_handler.vhd
+add_fileset_file rtl/sc_hub_top.vhd VHDL PATH rtl/sc_hub_top.vhd TOP_LEVEL_FILE
+add_fileset_file rtl/sc_hub_top_axi4.vhd VHDL PATH rtl/sc_hub_top_axi4.vhd
 
 add_parameter BACKPRESSURE BOOLEAN true
 set_parameter_property BACKPRESSURE DISPLAY_NAME "Enable Backpressure FIFO"

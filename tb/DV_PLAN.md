@@ -2,7 +2,7 @@
 
 **IP Name:** sc_hub_v2 (Slow Control Hub)
 **Author:** Yifeng Wang
-**Companion:** RTL_PLAN.md, TLM_PLAN.md, TLM_NOTE.md
+**Companion:** ../doc/RTL_PLAN.md, ../doc/TLM_PLAN.md, ../doc/TLM_NOTE.md
 **System DV Plan:** `/home/yifeng/packages/online_dpv2/online/fe_board/fe_scifi/tb/scifi_dp/doc/DV_PLAN.md`
 **Simulator:** Questa FSE 2022.4 (local license) or full Questa via ETH floating license (`8161@lic-mentor.ethz.ch`)
 **UVM:** UVM 1.2 bundled with Questa FSE. With ETH license: `rand`, `covergroup`, DPI available.
@@ -15,8 +15,8 @@ This plan is the **main entrance point** for all sc_hub_v2 DV. Test cases are or
 
 Current implementation snapshot:
 - The tables below allocate the full planned ID space.
-- The checked-in standalone harness does not execute the full plan yet. The live runnable set is `smoke_basic`, `T001`–`T012`, `T025`, `T027`–`T070`, `T077`–`T083`, `T087`–`T122`, plus `sc_hub_base_test` and `sc_hub_sweep_test`.
-- `T200+`, `T300+`, `T400+`, and `T500+` remain planned IDs unless explicitly mapped into the harness. See `tb/implementation-status.md` for the current runnable truth.
+- The checked-in standalone harness now executes directed protocol coverage through `T130` and the promoted UVM case matrix `T123`–`T128` plus `T300`–`T357`.
+- See `implementation-status.md` for the current runnable truth, residual blind spots, and bring-up guidance.
 
 | Document | Scope | Test IDs | Count |
 |----------|-------|----------|-------|
@@ -24,7 +24,8 @@ Current implementation snapshot:
 | [DV_PERF.md](DV_PERF.md) | Performance scans, stress tests, publication-quality characterization | T300–T349 | 50 |
 | [DV_EDGE.md](DV_EDGE.md) | Near-boundary, non-power-of-2, intentional near-failure without failure | T400–T449 | 50 |
 | [DV_ERROR.md](DV_ERROR.md) | Soft errors (counters), hard errors (reset-recoverable), fatal errors (config-induced unrecoverable) | T500–T549 | 50 |
-| **Total** | | | **305** |
+| [DV_CROSS.md](DV_CROSS.md) | Long mixed-feature cross cases for promoted regressions | T356–T357 | 2 |
+| **Total** | | | **307** |
 
 **ID allocation:**
 - T001–T128: Legacy v1 cases (migrated into DV_BASIC.md and DV_ERROR.md)
