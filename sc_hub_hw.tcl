@@ -1,6 +1,6 @@
 # ============================================================================
-# sc_hub "Slow Control Hub" v26.2.0
-# Yifeng Wang 2026.03.31
+# sc_hub "Slow Control Hub" v26.5.0.0411
+# Yifeng Wang 2026.04.11
 #
 # Major revision: modular sc_hub v2 with internal CSR header in the canonical
 # IP tree, validated store-and-forward download path, and an Avalon-MM
@@ -13,8 +13,8 @@
 package require -exact qsys 16.1
 
 set_module_property NAME sc_hub
-set_module_property DISPLAY_NAME "Slow Control Hub"
-set_module_property VERSION 26.2.0
+set_module_property DISPLAY_NAME "Slow Control Hub Mu3E IP"
+set_module_property VERSION 26.5.0.0411
 set_module_property DESCRIPTION "Modular slow-control hub with internal CSR window, validated store-and-forward write path, and the live Avalon-MM compatibility boundary used by existing systems."
 set_module_property GROUP "Mu3e Control Plane/Modules"
 set_module_property AUTHOR "Yifeng Wang"
