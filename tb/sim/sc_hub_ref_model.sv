@@ -1,29 +1,27 @@
 package sc_hub_ref_model_pkg;
   import sc_hub_sim_pkg::*;
 
-  localparam int unsigned HUB_CSR_BASE_ADDR_CONST  = 16'hFE80;
+  localparam int unsigned HUB_CSR_BASE_ADDR_CONST    = 16'hFE80;
   localparam int unsigned HUB_CSR_WINDOW_WORDS_CONST = 32;
-  localparam logic [31:0] HUB_ID_CONST             = 32'h5348_0000;
-  localparam int unsigned HUB_VERSION_YY_CONST     = 26;
-  localparam int unsigned HUB_VERSION_MAJOR_CONST  = 2;
-  localparam int unsigned HUB_VERSION_PRE_CONST    = 0;
-  localparam int unsigned HUB_VERSION_MONTH_CONST  = 3;
-  localparam int unsigned HUB_VERSION_DAY_CONST    = 31;
+  localparam logic [31:0] HUB_UID_CONST              = 32'h5343_4842;
+  localparam logic [31:0] HUB_ID_CONST               = HUB_UID_CONST;
+  localparam int unsigned HUB_VERSION_MAJOR_CONST    = 26;
+  localparam int unsigned HUB_VERSION_MINOR_CONST    = 6;
+  localparam int unsigned HUB_VERSION_PATCH_CONST    = 1;
+  localparam int unsigned HUB_BUILD_CONST            = 12'h411;
 
   function automatic logic [31:0] pack_version_word(
-    input int unsigned version_yy,
     input int unsigned version_major,
-    input int unsigned version_pre,
-    input int unsigned version_month,
-    input int unsigned version_day
+    input int unsigned version_minor,
+    input int unsigned version_patch,
+    input int unsigned build
   );
     logic [31:0] version_word;
-    version_word          = '0;
-    version_word[31:24]   = version_yy[7:0];
-    version_word[23:18]   = version_major[5:0];
-    version_word[17:16]   = version_pre[1:0];
-    version_word[15:8]    = version_month[7:0];
-    version_word[7:0]     = version_day[7:0];
+    version_word        = '0;
+    version_word[31:24] = version_major[7:0];
+    version_word[23:16] = version_minor[7:0];
+    version_word[15:12] = version_patch[3:0];
+    version_word[11:0]  = build[11:0];
     return version_word;
   endfunction
 
@@ -37,13 +35,12 @@ package sc_hub_ref_model_pkg;
 
     offset = word_addr - HUB_CSR_BASE_ADDR_CONST;
     case (offset)
-      18'h0000: return HUB_ID_CONST;
+      18'h0000: return HUB_UID_CONST;
       18'h0001: return pack_version_word(
-                  HUB_VERSION_YY_CONST,
                   HUB_VERSION_MAJOR_CONST,
-                  HUB_VERSION_PRE_CONST,
-                  HUB_VERSION_MONTH_CONST,
-                  HUB_VERSION_DAY_CONST
+                  HUB_VERSION_MINOR_CONST,
+                  HUB_VERSION_PATCH_CONST,
+                  HUB_BUILD_CONST
                 );
       default:  return 32'h0000_0000;
     endcase
@@ -60,10 +57,18 @@ package sc_hub_ref_model_pkg;
     reply.header_valid  = 1'b1;
     reply.payload_words = cmd.rw_length;
     for (int unsigned idx = 0; idx < cmd.rw_length && idx < 256; idx++) begin
-      if (is_internal_csr_addr((cmd.start_address[17:0] + idx) & 18'h3FFFF)) begin
-        reply.payload[idx] = predict_csr_read_word((cmd.start_address[17:0] + idx) & 18'h3FFFF);
+      logic [17:0] word_addr;
+
+      if (cmd_is_nonincrementing(cmd)) begin
+        word_addr = cmd.start_address[17:0] & 18'h3FFFF;
       end else begin
-        reply.payload[idx] = mem[(cmd.start_address[17:0] + idx) & 18'h3FFFF];
+        word_addr = (cmd.start_address[17:0] + idx) & 18'h3FFFF;
+      end
+
+      if (is_internal_csr_addr(word_addr)) begin
+        reply.payload[idx] = predict_csr_read_word(word_addr);
+      end else begin
+        reply.payload[idx] = mem[word_addr];
       end
     end
     return reply;

@@ -35,11 +35,11 @@ class sc_hub_case_test extends sc_hub_base_test;
     return (get_uint_plusarg(key, default_value ? 1 : 0) != 0);
   endfunction
 
-  function automatic sc_type_e calc_sc_type(bit is_write, int unsigned rw_length);
-    if (rw_length <= 1) begin
-      return is_write ? SC_WRITE : SC_READ;
+  function automatic sc_type_e calc_sc_type(bit is_write, bit nonincrementing = 1'b0);
+    if (nonincrementing) begin
+      return is_write ? SC_WRITE_NONINCREMENTING : SC_READ_NONINCREMENTING;
     end
-    return is_write ? SC_BURST_WRITE : SC_BURST_READ;
+    return is_write ? SC_WRITE : SC_READ;
   endfunction
 
   function automatic logic [1:0] calc_forced_response(string rsp_name);
@@ -111,12 +111,13 @@ class sc_hub_case_test extends sc_hub_base_test;
   function automatic sc_pkt_seq_item build_item(
     input logic [23:0] start_address,
     input int unsigned rw_length,
-    input bit          is_write
+    input bit          is_write,
+    input bit          nonincrementing = 1'b0
   );
     sc_pkt_seq_item item_h;
 
     item_h = sc_pkt_seq_item::type_id::create("item_h");
-    item_h.sc_type       = calc_sc_type(is_write, rw_length);
+    item_h.sc_type       = calc_sc_type(is_write, nonincrementing);
     item_h.start_address = start_address;
     item_h.rw_length     = rw_length;
     if (is_write) begin
@@ -265,6 +266,7 @@ class sc_hub_case_test extends sc_hub_base_test;
     int unsigned    ordering_pct;
     int unsigned    atomic_pct;
     int unsigned    malformed_every;
+    int unsigned    nonincrement_pct;
     int unsigned    order_domains;
     bit             force_ooo;
     int unsigned    global_idx;
@@ -280,6 +282,7 @@ class sc_hub_case_test extends sc_hub_base_test;
     ordering_pct       = get_uint_plusarg("SC_HUB_ORDERING_PCT", 0);
     atomic_pct         = get_uint_plusarg("SC_HUB_ATOMIC_PCT", 0);
     malformed_every    = get_uint_plusarg("SC_HUB_MALFORMED_EVERY", 0);
+    nonincrement_pct   = get_uint_plusarg("SC_HUB_NONINCREMENT_PCT", 0);
     order_domains      = get_uint_plusarg("SC_HUB_ORDER_DOMAINS", 1);
     force_ooo          = get_bit_plusarg("SC_HUB_FORCE_OOO", 1'b0);
     addr_mode          = get_string_plusarg("SC_HUB_ADDR_MODE", "linear");
@@ -299,6 +302,7 @@ class sc_hub_case_test extends sc_hub_base_test;
         bit          internal_pkt;
         bit          atomic_pkt;
         bit          ordered_pkt;
+        bit          nonincrement_pkt;
         bit          is_write;
         int unsigned pkt_len;
         logic [23:0] pkt_addr;
@@ -308,24 +312,28 @@ class sc_hub_case_test extends sc_hub_base_test;
         internal_pkt   = (!malformed_pkt) && ((next_lcg() % 100) < internal_pct);
         atomic_pkt     = (!malformed_pkt) && (!internal_pkt) && ((next_lcg() % 100) < atomic_pct);
         ordered_pkt    = (!malformed_pkt) && (!atomic_pkt) && ((next_lcg() % 100) < ordering_pct);
+        nonincrement_pkt = (!malformed_pkt) && (!atomic_pkt) && ((next_lcg() % 100) < nonincrement_pct);
         is_write       = ((next_lcg() % 100) >= read_pct);
         pkt_len        = (fixed_len != 0) ? fixed_len : next_range(burst_min, burst_max);
         if (internal_pkt) begin
-          pkt_len  = 1;
-          is_write = (global_idx[0] == 1'b1);
+          pkt_len          = 1;
+          is_write         = (global_idx[0] == 1'b1);
+          nonincrement_pkt = 1'b0;
         end
         if (atomic_pkt) begin
-          pkt_len  = 1;
-          is_write = 1'b0;
+          pkt_len          = 1;
+          is_write         = 1'b0;
+          nonincrement_pkt = 1'b0;
         end
         if (malformed_pkt) begin
-          is_write = 1'b1;
+          is_write         = 1'b1;
+          nonincrement_pkt = 1'b0;
         end
 
         pkt_addr = internal_pkt ? next_internal_addr(is_write, global_idx)
                                 : next_external_addr(addr_mode, global_idx);
 
-        item_h = build_item(pkt_addr, pkt_len, is_write);
+        item_h = build_item(pkt_addr, pkt_len, is_write, nonincrement_pkt);
         if (malformed_pkt) begin
           item_h.malformed      = 1'b1;
           item_h.malformed_kind = "missing_trailer";

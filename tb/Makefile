@@ -2,7 +2,15 @@ QUESTA_HOME ?= /data1/intelFPGA_pro/23.1/questa_fse
 UVM_HOME    ?= $(QUESTA_HOME)/verilog_src/uvm-1.2
 QUESTA_LICENSE ?= $(QUESTA_HOME)/LR-287689_License.dat
 ETH_MENTOR_SERVER ?= 8161@lic-mentor.ethz.ch
-TB_LICENSE_CHAIN := $(QUESTA_LICENSE):$(ETH_MENTOR_SERVER)
+TB_LICENSE_CHAIN := $(ETH_MENTOR_SERVER)
+ifneq ($(wildcard $(QUESTA_LICENSE)),)
+TB_LICENSE_CHAIN := $(ETH_MENTOR_SERVER):$(QUESTA_LICENSE)
+endif
+UVM_DPI_LIB ?= $(QUESTA_HOME)/uvm-1.2/linux_x86_64/uvm_dpi
+UVM_VSIM_OPTS :=
+ifneq ($(wildcard $(UVM_DPI_LIB).so),)
+UVM_VSIM_OPTS += -sv_lib $(UVM_DPI_LIB)
+endif
 
 VLIB = $(QUESTA_HOME)/bin/vlib
 VMAP = $(QUESTA_HOME)/bin/vmap
@@ -12,11 +20,21 @@ VSIM = $(QUESTA_HOME)/bin/vsim
 VLOG_OPTS ?=
 VCOM_OPTS ?= -suppress 12110
 VSIM_OPTS ?=
+COV ?= 0
+COV_CODE ?= sbecft
+VLOG_COV_OPTS :=
+VCOM_COV_OPTS :=
+VSIM_COV_OPTS :=
+ifeq ($(COV),1)
+VLOG_COV_OPTS += +cover=$(COV_CODE)
+VCOM_COV_OPTS += +cover=$(COV_CODE)
+VSIM_COV_OPTS += -coverage
+endif
 SIM_DO ?= run -all; quit -f
 QUESTA_MODELSIM_INI ?= $(QUESTA_HOME)/modelsim.ini
 
 WORK       ?= work_sc_hub_tb
-RTL_DIR    := ..
+RTL_DIR    := ../rtl
 SIM_DIR    := ./sim
 UVM_DIR    := ./uvm
 SCRIPT_DIR := ./scripts
@@ -24,6 +42,7 @@ BUS_TYPE   ?= AVALON
 BUS_DEFINE := $(if $(filter AXI4,$(BUS_TYPE)),+define+SC_HUB_BUS_AXI4,)
 TEST_NAME ?= smoke_basic
 UVM_TESTNAME ?= sc_hub_base_test
+SIM_PLUSARGS ?=
 MODELSIM_INI := $(CURDIR)/modelsim.ini
 DPI_CPP_PATH ?= /usr/bin/gcc
 
@@ -85,7 +104,7 @@ $(MODELSIM_INI): $(WORK)
 	fi
 
 compile_rtl: $(MODELSIM_INI)
-	$(VCOM) $(VCOM_OPTS) -modelsimini $(MODELSIM_INI) -2008 -work $(WORK) \
+	$(VCOM) $(VCOM_OPTS) $(VCOM_COV_OPTS) -modelsimini $(MODELSIM_INI) -2008 -work $(WORK) \
 		$(RTL_DIR)/sc_hub_pkg.vhd \
 		$(RTL_DIR)/fifo/sc_hub_fifo_sc.vhd \
 		$(RTL_DIR)/fifo/sc_hub_fifo_sf.vhd \
@@ -102,10 +121,10 @@ compile_rtl: $(MODELSIM_INI)
 		$(RTL_DIR)/sc_hub_top_axi4.vhd
 
 compile_sim: compile_rtl
-	$(VLOG) $(VLOG_OPTS) -modelsimini $(MODELSIM_INI) -sv -work $(WORK) $(BUS_DEFINE) $(SIM_FILES)
+	$(VLOG) $(VLOG_OPTS) $(VLOG_COV_OPTS) -modelsimini $(MODELSIM_INI) -sv -work $(WORK) $(BUS_DEFINE) $(SIM_FILES)
 
 compile_uvm: compile_rtl
-	$(VLOG) $(VLOG_OPTS) -modelsimini $(MODELSIM_INI) -sv -work $(WORK) +define+UVM_NO_DPI $(BUS_DEFINE) \
+	$(VLOG) $(VLOG_OPTS) $(VLOG_COV_OPTS) -modelsimini $(MODELSIM_INI) -sv -work $(WORK) $(BUS_DEFINE) \
 		+incdir+$(UVM_HOME)/src \
 		+incdir+$(SIM_DIR) \
 		+incdir+$(UVM_DIR) \
@@ -119,16 +138,16 @@ compile_uvm: compile_rtl
 		$(UVM_FILES)
 
 run_sim_smoke: compile_sim
-	$(VSIM) -modelsimini $(MODELSIM_INI) $(VSIM_OPTS) -c -quiet -nodpiexports -suppress 19 -suppress 3009 -work $(WORK) sc_hub_tb_top +TEST_NAME=$(TEST_NAME) -do "$(SIM_DO)"
+	$(VSIM) -modelsimini $(MODELSIM_INI) $(VSIM_OPTS) $(VSIM_COV_OPTS) -c -quiet -suppress 19 -suppress 3009 -work $(WORK) sc_hub_tb_top +TEST_NAME=$(TEST_NAME) $(SIM_PLUSARGS) -do "$(SIM_DO)"
 
 run_uvm_smoke: compile_uvm
-	$(VSIM) -modelsimini $(MODELSIM_INI) $(VSIM_OPTS) -c -quiet -nodpiexports -suppress 19 -suppress 3009 -work $(WORK) sc_hub_uvm_tb_top +UVM_TESTNAME=$(UVM_TESTNAME) -do "$(SIM_DO)"
+	$(VSIM) -modelsimini $(MODELSIM_INI) $(VSIM_OPTS) $(VSIM_COV_OPTS) $(UVM_VSIM_OPTS) -c -quiet -suppress 19 -suppress 3009 -work $(WORK) sc_hub_uvm_tb_top +UVM_TESTNAME=$(UVM_TESTNAME) $(SIM_PLUSARGS) -do "$(SIM_DO)"
 
 run_directed:
-	$(SCRIPT_DIR)/run_directed.sh
+	$(SCRIPT_DIR)/run_directed.sh $(TEST_NAME)
 
 run_uvm:
-	$(SCRIPT_DIR)/run_uvm.sh
+	$(SCRIPT_DIR)/run_uvm.sh $(UVM_TESTNAME)
 
 run_basic:
 	$(SCRIPT_DIR)/run_basic.sh

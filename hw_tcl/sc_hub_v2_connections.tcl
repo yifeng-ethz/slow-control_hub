@@ -204,20 +204,20 @@ proc sc_hub_v2_init_fileset {} {
 
     # Keep the PD wrapper aligned to the live checked-in AVMM top-level.
     # Relative component paths avoid broken "submodules/home/..." QIP entries.
-    add_fileset_file sc_hub_pkg.vhd VHDL PATH sc_hub_pkg.vhd
-    add_fileset_file fifo/sc_hub_fifo_sc.vhd VHDL PATH fifo/sc_hub_fifo_sc.vhd
-    add_fileset_file fifo/sc_hub_fifo_sf.vhd VHDL PATH fifo/sc_hub_fifo_sf.vhd
-    add_fileset_file fifo/sc_hub_fifo_bp.vhd VHDL PATH fifo/sc_hub_fifo_bp.vhd
-    add_fileset_file sc_hub_pkt_rx.vhd VHDL PATH sc_hub_pkt_rx.vhd
-    add_fileset_file sc_hub_pkt_tx.vhd VHDL PATH sc_hub_pkt_tx.vhd
-    add_fileset_file sc_hub_core.vhd VHDL PATH sc_hub_core.vhd
-    add_fileset_file sc_hub_avmm_handler.vhd VHDL PATH sc_hub_avmm_handler.vhd
-    add_fileset_file sc_hub_payload_ram.vhd VHDL PATH sc_hub_payload_ram.vhd
-    add_fileset_file sc_hub_axi4_handler.vhd VHDL PATH sc_hub_axi4_handler.vhd
-    add_fileset_file sc_hub_axi4_core.vhd VHDL PATH sc_hub_axi4_core.vhd
-    add_fileset_file sc_hub_axi4_ooo_handler.vhd VHDL PATH sc_hub_axi4_ooo_handler.vhd
-    add_fileset_file sc_hub_top.vhd VHDL PATH sc_hub_top.vhd TOP_LEVEL_FILE
-    add_fileset_file sc_hub_top_axi4.vhd VHDL PATH sc_hub_top_axi4.vhd
+    add_fileset_file rtl/sc_hub_pkg.vhd VHDL PATH rtl/sc_hub_pkg.vhd
+    add_fileset_file rtl/fifo/sc_hub_fifo_sc.vhd VHDL PATH rtl/fifo/sc_hub_fifo_sc.vhd
+    add_fileset_file rtl/fifo/sc_hub_fifo_sf.vhd VHDL PATH rtl/fifo/sc_hub_fifo_sf.vhd
+    add_fileset_file rtl/fifo/sc_hub_fifo_bp.vhd VHDL PATH rtl/fifo/sc_hub_fifo_bp.vhd
+    add_fileset_file rtl/sc_hub_pkt_rx.vhd VHDL PATH rtl/sc_hub_pkt_rx.vhd
+    add_fileset_file rtl/sc_hub_pkt_tx.vhd VHDL PATH rtl/sc_hub_pkt_tx.vhd
+    add_fileset_file rtl/sc_hub_core.vhd VHDL PATH rtl/sc_hub_core.vhd
+    add_fileset_file rtl/sc_hub_avmm_handler.vhd VHDL PATH rtl/sc_hub_avmm_handler.vhd
+    add_fileset_file rtl/sc_hub_payload_ram.vhd VHDL PATH rtl/sc_hub_payload_ram.vhd
+    add_fileset_file rtl/sc_hub_axi4_handler.vhd VHDL PATH rtl/sc_hub_axi4_handler.vhd
+    add_fileset_file rtl/sc_hub_axi4_core.vhd VHDL PATH rtl/sc_hub_axi4_core.vhd
+    add_fileset_file rtl/sc_hub_axi4_ooo_handler.vhd VHDL PATH rtl/sc_hub_axi4_ooo_handler.vhd
+    add_fileset_file rtl/sc_hub_top.vhd VHDL PATH rtl/sc_hub_top.vhd TOP_LEVEL_FILE
+    add_fileset_file rtl/sc_hub_top_axi4.vhd VHDL PATH rtl/sc_hub_top_axi4.vhd
 }
 
 # ----------------------------------------------------------------------------

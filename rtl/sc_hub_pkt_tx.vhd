@@ -1,10 +1,10 @@
 -- File name: sc_hub_pkt_tx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.2
--- Date    : 20260402
--- Change  : Remove redundant same-cycle ready recheck on reply start so the
---           core-side arming handshake defines TX launch timing.
+-- Version : 26.6.1
+-- Date    : 20260411
+-- Change  : Restore the spec-book reply acknowledge marker on bit 16 while
+--           keeping the v2 response code in surrounding reserved bits.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -221,10 +221,13 @@ begin
                         tx_state                   <= EMITTING_HEADER;
 
                     when EMITTING_HEADER =>
+                        -- Keep the chapter 4.7 acknowledge marker on bit 16.
+                        -- Any v2-only metadata must stay in the surrounding reserved bits.
                         packet_word_v(31 downto 28) := reply_info_reg.order_domain;
                         packet_word_v(27 downto 20) := reply_info_reg.order_epoch;
-                        packet_word_v(19 downto 18) := reply_info_reg.order_scope;
-                        packet_word_v(17 downto 16) := reply_response_reg;
+                        packet_word_v(19 downto 18) := reply_response_reg;
+                        packet_word_v(17)           := '0';
+                        packet_word_v(16)           := '1';
                         packet_word_v(15 downto 0)  := reply_info_reg.rw_length;
                         wrote_word_v                := true;
                         if (reply_has_data_reg = '1' and unsigned(reply_info_reg.rw_length) /= 0) then

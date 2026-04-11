@@ -1,10 +1,11 @@
 -- File name: sc_hub_tiles_minimal_top.vhd
 -- Author: Codex
 -- =======================================
--- Version : 26.2.17
--- Date    : 20260402
+-- Version : 26.6.1
+-- Date    : 20260411
 -- Change  : Standalone small-preset wrapper for Quartus area/timing sign-off.
---           Tighten the preset to single-outstanding non-OoO operation.
+--           Keep the wrapper aligned to the live sc_hub_top boundary,
+--           including the widened AVMM address and tied-off CSR slave ports.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -23,7 +24,7 @@ entity sc_hub_tiles_minimal_top is
         aso_upload_ready            : in  std_logic;
         aso_upload_startofpacket    : out std_logic;
         aso_upload_endofpacket      : out std_logic;
-        avm_hub_address             : out std_logic_vector(15 downto 0);
+        avm_hub_address             : out std_logic_vector(17 downto 0);
         avm_hub_read                : out std_logic;
         avm_hub_readdata            : in  std_logic_vector(31 downto 0);
         avm_hub_writeresponsevalid  : in  std_logic;
@@ -37,6 +38,9 @@ entity sc_hub_tiles_minimal_top is
 end entity sc_hub_tiles_minimal_top;
 
 architecture rtl of sc_hub_tiles_minimal_top is
+    signal avs_csr_readdata_q      : std_logic_vector(31 downto 0);
+    signal avs_csr_readdatavalid_q : std_logic;
+    signal avs_csr_waitrequest_q   : std_logic;
 begin
     dut_inst : entity work.sc_hub_top
     generic map(
@@ -74,6 +78,14 @@ begin
         avm_hub_writedata          => avm_hub_writedata,
         avm_hub_waitrequest        => avm_hub_waitrequest,
         avm_hub_readdatavalid      => avm_hub_readdatavalid,
-        avm_hub_burstcount         => avm_hub_burstcount
+        avm_hub_burstcount         => avm_hub_burstcount,
+        avs_csr_address            => (others => '0'),
+        avs_csr_read               => '0',
+        avs_csr_write              => '0',
+        avs_csr_writedata          => (others => '0'),
+        avs_csr_readdata           => avs_csr_readdata_q,
+        avs_csr_readdatavalid      => avs_csr_readdatavalid_q,
+        avs_csr_waitrequest        => avs_csr_waitrequest_q,
+        avs_csr_burstcount         => '0'
     );
 end architecture rtl;

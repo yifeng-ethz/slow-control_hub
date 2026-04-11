@@ -447,6 +447,7 @@ proc sc_hub_v2_update_csr_table {} {
         {0x19 ORD_DRAIN_CNT RO "Release drain event counter."}
         {0x1A ORD_HOLD_CNT RO "Acquire hold event counter."}
         {0x1B DBG_DROP_DETAIL RO "Last dropped-packet debug detail word."}
+        {0x1C FEB_TYPE RW "Local detector-class selector used by M/S/T masking: 0=ALL, 1=MUPIX, 2=SCIFI, 3=TILE."}
         {0x1F HUB_CAP RO "Compile-time capability bits and identity-header presence."}
     }
 

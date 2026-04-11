@@ -12,15 +12,15 @@ set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_EFFORT NORMAL
 
-set_global_assignment -name VHDL_FILE ../../sc_hub_pkg.vhd
-set_global_assignment -name VHDL_FILE ../../fifo/sc_hub_fifo_sc.vhd
-set_global_assignment -name VHDL_FILE ../../fifo/sc_hub_fifo_sf.vhd
-set_global_assignment -name VHDL_FILE ../../fifo/sc_hub_fifo_bp.vhd
-set_global_assignment -name VHDL_FILE ../../sc_hub_pkt_rx.vhd
-set_global_assignment -name VHDL_FILE ../../sc_hub_pkt_tx.vhd
-set_global_assignment -name VHDL_FILE ../../sc_hub_core.vhd
-set_global_assignment -name VHDL_FILE ../../sc_hub_avmm_handler.vhd
-set_global_assignment -name VHDL_FILE ../../sc_hub_top.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_pkg.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/fifo/sc_hub_fifo_sc.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/fifo/sc_hub_fifo_sf.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/fifo/sc_hub_fifo_bp.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_pkt_rx.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_pkt_tx.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_core.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_avmm_handler.vhd
+set_global_assignment -name VHDL_FILE ../../rtl/sc_hub_top.vhd
 set_global_assignment -name VHDL_FILE sc_hub_tiles_minimal_top.vhd
 
 set_global_assignment -name SDC_FILE sc_hub_tiles_minimal.sdc

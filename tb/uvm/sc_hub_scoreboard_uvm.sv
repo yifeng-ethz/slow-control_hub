@@ -42,13 +42,12 @@ class sc_hub_scoreboard_uvm extends uvm_component;
   function automatic logic [31:0] predict_read_word(input logic [17:0] word_addr);
     if (sc_hub_ref_model_pkg::is_internal_csr_addr(word_addr)) begin
       case (word_addr - sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST)
-        16'h0000: return sc_hub_ref_model_pkg::HUB_ID_CONST;
+        16'h0000: return sc_hub_ref_model_pkg::HUB_UID_CONST;
         16'h0001: return sc_hub_ref_model_pkg::pack_version_word(
-                    sc_hub_ref_model_pkg::HUB_VERSION_YY_CONST,
                     sc_hub_ref_model_pkg::HUB_VERSION_MAJOR_CONST,
-                    sc_hub_ref_model_pkg::HUB_VERSION_PRE_CONST,
-                    sc_hub_ref_model_pkg::HUB_VERSION_MONTH_CONST,
-                    sc_hub_ref_model_pkg::HUB_VERSION_DAY_CONST
+                    sc_hub_ref_model_pkg::HUB_VERSION_MINOR_CONST,
+                    sc_hub_ref_model_pkg::HUB_VERSION_PATCH_CONST,
+                    sc_hub_ref_model_pkg::HUB_BUILD_CONST
                   );
         default:  return mem_model[word_addr];
       endcase
@@ -74,7 +73,14 @@ class sc_hub_scoreboard_uvm extends uvm_component;
       reply.header_valid  = 1'b1;
       reply.payload_words = cmd.rw_length;
       for (int unsigned idx = 0; idx < cmd_item.rw_length && idx < 256; idx++) begin
-        reply.payload[idx] = predict_read_word((cmd_item.start_address + idx) & 18'h3FFFF);
+        logic [17:0] word_addr;
+
+        if (cmd.sc_type[1]) begin
+          word_addr = cmd_item.start_address[17:0] & 18'h3FFFF;
+        end else begin
+          word_addr = (cmd_item.start_address[17:0] + idx) & 18'h3FFFF;
+        end
+        reply.payload[idx] = predict_read_word(word_addr);
       end
       reply.response = cmd_item.forced_response;
       expect_read_error_payload = (cmd_item.forced_response != 2'b00);
@@ -117,7 +123,14 @@ class sc_hub_scoreboard_uvm extends uvm_component;
 
     if (cmd_item.is_write()) begin
       for (int unsigned idx = 0; idx < cmd_item.data_words_q.size() && idx < cmd_item.rw_length; idx++) begin
-        mem_model[(cmd_item.start_address + idx) & 18'h3FFFF] = cmd_item.data_words_q[idx];
+        logic [17:0] word_addr;
+
+        if (cmd_item.sc_type[1]) begin
+          word_addr = cmd_item.start_address[17:0] & 18'h3FFFF;
+        end else begin
+          word_addr = (cmd_item.start_address[17:0] + idx) & 18'h3FFFF;
+        end
+        mem_model[word_addr] = cmd_item.data_words_q[idx];
       end
     end
   endfunction
@@ -146,9 +159,6 @@ class sc_hub_scoreboard_uvm extends uvm_component;
       return 1'b0;
     end
     if (actual_h.order_epoch !== expected_h.order_epoch) begin
-      return 1'b0;
-    end
-    if (actual_h.order_scope !== expected_h.order_scope) begin
       return 1'b0;
     end
     if (actual_h.atomic !== expected_h.atomic) begin

@@ -20,6 +20,7 @@ class sc_hub_sweep_test extends sc_hub_base_test;
     int unsigned             drain_cycles;
 
     phase.raise_objection(this);
+    wait_for_testbench_settle();
 
     for (pass_idx = 0; pass_idx < cfg.sweep_iterations; pass_idx++) begin
       if (cfg.enable_addr_sweep) begin
@@ -112,23 +113,7 @@ class sc_hub_sweep_test extends sc_hub_base_test;
       repeat (cfg.sweep_idle_cycles) @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
     end
 
-    for (drain_cycles = 0; drain_cycles < 20000; drain_cycles++) begin
-      if ((env_h.scoreboard_h.expected_q.size() == 0) &&
-          (env_h.bus_agent_h.monitor_h.pending_cmd_q.size() == 0)) begin
-        break;
-      end
-      @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
-    end
-
-    if ((env_h.scoreboard_h.expected_q.size() != 0) ||
-        (env_h.bus_agent_h.monitor_h.pending_cmd_q.size() != 0)) begin
-      `uvm_error(get_type_name(),
-                 $sformatf("Sweep drain timed out pending_expected=%0d pending_bus_cmd=%0d after %0d cycles",
-                           env_h.scoreboard_h.expected_q.size(),
-                           env_h.bus_agent_h.monitor_h.pending_cmd_q.size(),
-                           drain_cycles))
-    end
-
+    wait_for_drain("sweep");
     phase.drop_objection(this);
   endtask
 endclass

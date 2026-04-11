@@ -29,6 +29,7 @@ entity sc_hub_axi4_ooo_handler is
         o_rd_cmd_ready      : out std_logic;
         i_rd_cmd_address    : in  std_logic_vector(17 downto 0);
         i_rd_cmd_length     : in  std_logic_vector(15 downto 0);
+        i_rd_cmd_nonincrement : in  std_logic;
         i_rd_cmd_tag        : in  std_logic_vector(3 downto 0);
         i_rd_cmd_lock       : in  std_logic;
         o_rd_data_valid     : out std_logic;
@@ -42,6 +43,7 @@ entity sc_hub_axi4_ooo_handler is
         o_wr_cmd_ready      : out std_logic;
         i_wr_cmd_address    : in  std_logic_vector(17 downto 0);
         i_wr_cmd_length     : in  std_logic_vector(15 downto 0);
+        i_wr_cmd_nonincrement : in  std_logic;
         i_wr_cmd_lock       : in  std_logic;
         i_wr_data_valid     : in  std_logic;
         i_wr_data           : in  std_logic_vector(31 downto 0);
@@ -94,6 +96,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal ar_pending_valid      : std_logic := '0';
     signal ar_pending_address    : std_logic_vector(17 downto 0) := (others => '0');
     signal ar_pending_length     : unsigned(15 downto 0) := (others => '0');
+    signal ar_pending_nonincrement : std_logic := '0';
     signal ar_pending_tag        : std_logic_vector(3 downto 0) := (others => '0');
     signal ar_pending_lock       : std_logic := '0';
     signal rd_active             : std_logic_vector(0 to MAX_READ_OUTSTANDING_G - 1) := (others => '0');
@@ -111,6 +114,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal wr_state              : wr_state_t := WR_IDLE;
     signal wr_address_reg        : std_logic_vector(17 downto 0) := (others => '0');
     signal wr_length_reg         : unsigned(15 downto 0) := (others => '0');
+    signal wr_nonincrement_reg   : std_logic := '0';
     signal wr_words_seen         : unsigned(15 downto 0) := (others => '0');
     signal wr_timeout_counter    : natural range 0 to WR_TIMEOUT_CYCLES_G := 0;
     signal wr_done_pulse         : std_logic := '0';
@@ -153,7 +157,7 @@ begin
     m_axi_awaddr  <= wr_address_reg;
     m_axi_awlen   <= std_logic_vector(resize(wr_length_reg - 1, m_axi_awlen'length));
     m_axi_awsize  <= "010";
-    m_axi_awburst <= "01";
+    m_axi_awburst <= "00" when (wr_nonincrement_reg = '1') else "01";
     m_axi_awlock  <= wr_lock_reg;
     m_axi_awvalid <= '1' when (wr_state = WR_SEND_AW) else '0';
 
@@ -167,7 +171,7 @@ begin
     m_axi_araddr  <= ar_pending_address;
     m_axi_arlen   <= std_logic_vector(resize(ar_pending_length - 1, m_axi_arlen'length));
     m_axi_arsize  <= "010";
-    m_axi_arburst <= "01";
+    m_axi_arburst <= "00" when (ar_pending_nonincrement = '1') else "01";
     m_axi_arlock  <= ar_pending_lock;
     m_axi_arvalid <= ar_pending_valid;
     m_axi_rready  <= '1';
@@ -215,6 +219,7 @@ begin
                 ar_pending_valid    <= '0';
                 ar_pending_address  <= (others => '0');
                 ar_pending_length   <= (others => '0');
+                ar_pending_nonincrement <= '0';
                 ar_pending_tag      <= (others => '0');
                 ar_pending_lock     <= '0';
                 rd_active           <= (others => '0');
@@ -231,6 +236,7 @@ begin
                 wr_state            <= WR_IDLE;
                 wr_address_reg      <= (others => '0');
                 wr_length_reg       <= (others => '0');
+                wr_nonincrement_reg <= '0';
                 wr_words_seen       <= (others => '0');
                 wr_timeout_counter  <= 0;
                 wr_done_pulse       <= '0';
@@ -251,6 +257,7 @@ begin
                     ar_pending_valid   <= '1';
                     ar_pending_address <= i_rd_cmd_address;
                     ar_pending_length  <= unsigned(i_rd_cmd_length);
+                    ar_pending_nonincrement <= i_rd_cmd_nonincrement;
                     ar_pending_lock    <= i_rd_cmd_lock;
                     if (OOO_CFG_ENABLE_G) then
                         ar_pending_tag <= i_rd_cmd_tag;
@@ -271,6 +278,7 @@ begin
                     end if;
                     ar_pending_valid <= '0';
                     ar_pending_lock  <= '0';
+                    ar_pending_nonincrement <= '0';
                 end if;
 
                 if (m_axi_rvalid = '1') then
@@ -344,6 +352,7 @@ begin
                         if (i_wr_cmd_valid = '1') then
                             wr_address_reg     <= i_wr_cmd_address;
                             wr_length_reg      <= unsigned(i_wr_cmd_length);
+                            wr_nonincrement_reg <= i_wr_cmd_nonincrement;
                             wr_response_reg    <= SC_RSP_OK_CONST;
                             wr_lock_reg        <= i_wr_cmd_lock;
                             wr_state           <= WR_SEND_AW;

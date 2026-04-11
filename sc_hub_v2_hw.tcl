@@ -1,5 +1,5 @@
 # ============================================================================
-# sc_hub_v2 "Slow Control Hub v2" v26.4.0
+# sc_hub_v2 "Slow Control Hub v2" v26.6.1
 # Yifeng Wang 2026.04.08
 #
 # Comprehensive _hw.tcl for sc_hub_v2 with:
@@ -29,7 +29,7 @@ package require -exact qsys 16.1
 
 set_module_property NAME                    sc_hub_v2
 set_module_property DISPLAY_NAME            "Slow Control Hub Mu3E IP"
-set_module_property VERSION                 26.5.0.0411
+set_module_property VERSION                 26.6.1.0411
 set_module_property DESCRIPTION             "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP                   "Mu3e Control Plane/Modules"
 set_module_property AUTHOR                  "Yifeng Wang"

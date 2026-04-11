@@ -54,10 +54,10 @@ module sc_pkt_monitor (
           next_reply.header_word   = aso_data[31:0];
           next_reply.order_domain  = aso_data[31:28];
           next_reply.order_epoch   = aso_data[27:20];
-          next_reply.order_scope   = (aso_data[19:18] == 2'b11) ? 2'b00 : aso_data[19:18];
+          next_reply.order_scope   = 2'b00;
           next_reply.echoed_length = aso_data[15:0];
-          next_reply.header_valid  = 1'b1;
-          next_reply.response      = aso_data[17:16];
+          next_reply.header_valid  = aso_data[16];
+          next_reply.response      = aso_data[19:18];
         end
         default: begin
           if (next_word_index > 2 && !aso_eop && next_reply.payload_words < 256) begin

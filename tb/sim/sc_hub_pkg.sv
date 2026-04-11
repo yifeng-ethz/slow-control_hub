@@ -6,11 +6,14 @@ package sc_hub_sim_pkg;
   localparam logic [7:0] K284_CONST = 8'h9C;
 
   typedef enum logic [1:0] {
-    SC_BURST_READ  = 2'b00,
-    SC_BURST_WRITE = 2'b01,
-    SC_READ        = 2'b10,
-    SC_WRITE       = 2'b11
+    SC_READ                  = 2'b00,
+    SC_WRITE                 = 2'b01,
+    SC_READ_NONINCREMENTING  = 2'b10,
+    SC_WRITE_NONINCREMENTING = 2'b11
   } sc_type_e;
+
+  localparam sc_type_e SC_BURST_READ  = SC_READ;
+  localparam sc_type_e SC_BURST_WRITE = SC_WRITE;
 
   typedef enum logic [1:0] {
     SC_ORDER_RELAXED  = 2'b00,
@@ -18,6 +21,13 @@ package sc_hub_sim_pkg;
     SC_ORDER_ACQUIRE  = 2'b10,
     SC_ORDER_INVALID  = 2'b11
   } sc_order_mode_e;
+
+  typedef enum logic [1:0] {
+    FEB_TYPE_ALL   = 2'b00,
+    FEB_TYPE_MUPIX = 2'b01,
+    FEB_TYPE_SCIFI = 2'b10,
+    FEB_TYPE_TILE  = 2'b11
+  } feb_type_e;
 
   typedef struct {
     sc_type_e    sc_type;
@@ -93,8 +103,21 @@ package sc_hub_sim_pkg;
     return (cmd.sc_type[0] == 1'b1);
   endfunction
 
-  function automatic bit reply_suppressed(sc_cmd_t cmd);
-    return (cmd.mask_m || cmd.mask_s || cmd.mask_t || cmd.mask_r);
+  function automatic bit cmd_is_nonincrementing(sc_cmd_t cmd);
+    return (cmd.sc_type[1] == 1'b1);
+  endfunction
+
+  function automatic bit cmd_ignored_for_feb(sc_cmd_t cmd, feb_type_e feb_type);
+    case (feb_type)
+      FEB_TYPE_MUPIX: return cmd.mask_m;
+      FEB_TYPE_SCIFI: return cmd.mask_s;
+      FEB_TYPE_TILE:  return cmd.mask_t;
+      default:        return (cmd.mask_m || cmd.mask_s || cmd.mask_t);
+    endcase
+  endfunction
+
+  function automatic bit reply_suppressed(sc_cmd_t cmd, feb_type_e feb_type = FEB_TYPE_ALL);
+    return (cmd.mask_r || cmd_ignored_for_feb(cmd, feb_type));
   endfunction
 
   function automatic sc_cmd_t make_cmd(
@@ -169,7 +192,7 @@ package sc_hub_sim_pkg;
 
   function automatic sc_reply_t make_empty_reply();
     sc_reply_t reply;
-    reply.sc_type       = SC_BURST_READ;
+    reply.sc_type       = SC_READ;
     reply.fpga_id       = '0;
     reply.start_address = '0;
     reply.order_mode    = SC_ORDER_RELAXED;

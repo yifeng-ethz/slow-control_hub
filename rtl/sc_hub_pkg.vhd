@@ -1,9 +1,11 @@
 -- File name: sc_hub_pkg.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.5.0
+-- Version : 26.6.1
 -- Date    : 20260411
--- Change  : Standard CSR identity header (UID + META mux at words 0-1).
+-- Change  : Release-align shared protocol helpers to v26.6.1 with explicit
+--           M/S/T execution masks, spec-book reply-ack semantics, local FEB
+--           type selection, and non-incrementing command helpers.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -55,7 +57,13 @@ package sc_hub_pkg is
     constant HUB_CSR_WO_ORD_DRAIN_CNT_CONST : natural := 16#019#;
     constant HUB_CSR_WO_ORD_HOLD_CNT_CONST  : natural := 16#01A#;
     constant HUB_CSR_WO_DBG_DROP_DETAIL_CONST : natural := 16#01B#;
+    constant HUB_CSR_WO_FEB_TYPE_CONST      : natural := 16#01C#;
     constant HUB_CSR_WO_HUB_CAP_CONST       : natural := 16#01F#;
+
+    constant HUB_FEB_TYPE_ALL_CONST         : std_logic_vector(1 downto 0) := "00";
+    constant HUB_FEB_TYPE_MUPIX_CONST       : std_logic_vector(1 downto 0) := "01";
+    constant HUB_FEB_TYPE_SCIFI_CONST       : std_logic_vector(1 downto 0) := "10";
+    constant HUB_FEB_TYPE_TILE_CONST        : std_logic_vector(1 downto 0) := "11";
 
     constant HUB_ERR_UP_FIFO_OVERFLOW_CONST   : natural := 0;
     constant HUB_ERR_DOWN_FIFO_OVERFLOW_CONST : natural := 1;
@@ -142,11 +150,20 @@ package sc_hub_pkg is
         pkt_info : sc_pkt_info_t
     ) return boolean;
 
+    function pkt_locally_masked_func (
+        pkt_info       : sc_pkt_info_t;
+        local_feb_type : std_logic_vector(1 downto 0)
+    ) return boolean;
+
     function pkt_has_download_words_func (
         pkt_info : sc_pkt_info_t
     ) return boolean;
 
     function pkt_is_atomic_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean;
+
+    function pkt_is_nonincrementing_func (
         pkt_info : sc_pkt_info_t
     ) return boolean;
 end package sc_hub_pkg;
@@ -230,8 +247,25 @@ package body sc_hub_pkg is
         pkt_info : sc_pkt_info_t
     ) return boolean is
     begin
-        return (pkt_info.mask_m = '1' or pkt_info.mask_s = '1' or pkt_info.mask_t = '1' or pkt_info.mask_r = '1');
+        return (pkt_info.mask_r = '1');
     end function pkt_reply_suppressed_func;
+
+    function pkt_locally_masked_func (
+        pkt_info       : sc_pkt_info_t;
+        local_feb_type : std_logic_vector(1 downto 0)
+    ) return boolean is
+    begin
+        case local_feb_type is
+            when HUB_FEB_TYPE_MUPIX_CONST =>
+                return (pkt_info.mask_m = '1');
+            when HUB_FEB_TYPE_SCIFI_CONST =>
+                return (pkt_info.mask_s = '1');
+            when HUB_FEB_TYPE_TILE_CONST =>
+                return (pkt_info.mask_t = '1');
+            when others =>
+                return (pkt_info.mask_m = '1' or pkt_info.mask_s = '1' or pkt_info.mask_t = '1');
+        end case;
+    end function pkt_locally_masked_func;
 
     function pkt_has_download_words_func (
         pkt_info : sc_pkt_info_t
@@ -246,4 +280,11 @@ package body sc_hub_pkg is
     begin
         return (pkt_info.atomic_flag = '1');
     end function pkt_is_atomic_func;
+
+    function pkt_is_nonincrementing_func (
+        pkt_info : sc_pkt_info_t
+    ) return boolean is
+    begin
+        return (pkt_info.sc_type(1) = '1');
+    end function pkt_is_nonincrementing_func;
 end package body sc_hub_pkg;

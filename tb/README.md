@@ -1,53 +1,50 @@
 # sc_hub Verification Harness
 
-This `tb/` tree contains the slow-control_hub regression harness.
+The `tb/` tree is the standalone regression harness for `slow-control_hub`.
 
-- `sim/`: directed/SystemVerilog scaffolding from `DV_PLAN.md`
-- `uvm/`: UVM 1.2 scaffold for promoted sweeps
-- `scripts/`: run helpers and report helpers
-- `implementation-status.md`: explicit coverage and RTL handoff notes
+- `sim/`: directed SystemVerilog infrastructure and scoreboard
+- `uvm/`: promoted UVM environment and sequence-driven regressions
+- `scripts/`: run helpers for directed, UVM, PERF, EDGE, and ERROR suites
+- `implementation-status.md`: current runnable truth and known blind spots
 
-## Implemented today
+## Runnable matrix
 
-- Directed harness dispatch and runnable IDs:
-  - `smoke_basic`
-  - `T001`–`T122`
-- UVM harness entry tests:
-  - `sc_hub_base_test`
-  - `sc_hub_sweep_test`
+Current promoted coverage in this tree is:
 
-All remaining categories are still scaffolded in plan docs but not currently runnable in this snapshot.
+- directed smoke and directed protocol cases through `T130`
+- UVM/promoted sweep cases `T123`–`T128`
+- promoted PERF/UVM cases `T300`–`T357`
+- long mixed-feature cross cases documented in [DV_CROSS.md](DV_CROSS.md)
 
-- `T123`–`T128` (UVM SWP): sequence shells exist but no full matrix wiring.
-- `T200`–`T249`: split-buffer, OoO, atomic, and ordering feature blocks are not yet mapped to the runner matrix.
-- `T300`–`T349`, `T350`–`T355`: PERF sweeps are not runnable.
-- `T400`–`T449`: EDGE cases are not runnable.
-- `T500`–`T549`: ERROR cases are not runnable.
+The harness is no longer limited to the early `T001`–`T122` snapshot.
 
-## Makefile run entry points
+## Useful commands
 
 ```bash
 cd tb
-make run_directed TEST_NAME=T001
-make run_uvm     UVM_TESTNAME=sc_hub_base_test
-make run_basic   BUS_TYPE=AXI4
-make run_all
-make coverage_report
+make compile_sim WORK=work_dir BUS_TYPE=AXI4
+make run_sim_smoke WORK=work_dir BUS_TYPE=AXI4 TEST_NAME=T129
+make compile_uvm WORK=work_uvm BUS_TYPE=AXI4
+./scripts/run_uvm_case.sh T341 T356 T357
 ```
 
-## Script matrix
+## Script entry points
 
-- `scripts/run_directed.sh [TEST_NAME ...]` dispatches directed tests (`sc_hub_tb_top.sv`).
-- `scripts/run_uvm.sh [UVM_TESTNAME ...]` dispatches UVM tests.
-- `scripts/run_basic.sh` runs the currently implemented directed default set (`T001`–`T122`).
-- `scripts/run_perf.sh` currently reports PERF blockers and exits cleanly.
-- `scripts/run_edge.sh` currently reports EDGE blockers and exits cleanly.
-- `scripts/run_error.sh` currently reports ERROR blockers and exits cleanly.
-- `scripts/run_all.sh` runs `run_basic`, `run_uvm`, `run_perf`, `run_edge`, `run_error` and summarizes step outcomes.
-- `scripts/coverage_report.sh` prepares/prints coverage reporting commands.
+- `scripts/run_directed.sh [TEST_NAME ...]`: directed and promoted-case dispatcher
+- `scripts/run_uvm.sh [UVM_TESTNAME ...]`: raw UVM test launcher
+- `scripts/run_uvm_case.sh [Txxx ...]`: promoted DV-plan case dispatcher
+- `scripts/run_basic.sh`: basic directed batch
+- `scripts/run_perf.sh`: promoted PERF batch, now including `T356` and `T357`
+- `scripts/run_edge.sh`: EDGE batch
+- `scripts/run_error.sh`: ERROR batch
+- `scripts/run_all.sh`: top-level batch wrapper
+- `scripts/coverage_report.sh`: coverage reporting helper
 
-## Handoff status
+## Notes
 
-See [`implementation-status.md`](implementation-status.md) for the current
-harness-to-plan gap, boundary-specific blockers, and RTL file candidates that
-need handoff.
+- The default Questa path in `Makefile` is the local 23.1 tree and prefers the
+  ETH Mentor floating license chain when available.
+- AXI4 remains supported in standalone RTL simulation even though the packaged
+  Platform Designer component is Avalon-MM only.
+- Old host software that still assumes the legacy bit-16 write-ack format should
+  not be treated as a verification oracle for this hub.

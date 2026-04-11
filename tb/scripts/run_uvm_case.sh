@@ -30,19 +30,103 @@ pass_count=0
 fail_count=0
 run_count=0
 current_case_rc=0
+cov_subrun_index=0
+
+rewrite_plusarg() {
+  local opts="$1"
+  local key="$2"
+  local value="$3"
+
+  if [ -z "$value" ]; then
+    printf '%s' "$opts"
+    return 0
+  fi
+
+  if printf '%s' "$opts" | rg -q "(^| )\+${key}="; then
+    printf '%s' "$(printf '%s' "$opts" | perl -0pe "s@(?<!\S)\+${key}=[^\s]+@+${key}=${value}@g")"
+  else
+    printf '%s' "$opts +${key}=${value}"
+  fi
+}
+
+apply_runtime_overrides() {
+  local opts="$1"
+  local key
+  local env_name
+  local value
+
+  for key in \
+    SC_HUB_TXN_COUNT \
+    SC_HUB_RATE_POINTS \
+    SC_HUB_MAX_GAP \
+    SC_HUB_FIXED_LEN \
+    SC_HUB_BURST_MIN \
+    SC_HUB_BURST_MAX \
+    SC_HUB_READ_PCT \
+    SC_HUB_INTERNAL_PCT \
+    SC_HUB_ORDERING_PCT \
+    SC_HUB_ATOMIC_PCT \
+    SC_HUB_NONINCREMENT_PCT \
+    SC_HUB_ORDER_DOMAINS \
+    SC_HUB_CFG_ENABLE_OOO \
+    SC_HUB_FORCE_OOO \
+    SC_HUB_CHECK_ORDER_EPOCH_MONO \
+    SC_HUB_RD_LATENCY \
+    SC_HUB_WR_LATENCY \
+    TIMEOUT_CYCLES; do
+    env_name="${key}_OVERRIDE"
+    value="${!env_name-}"
+    if [ -n "$value" ]; then
+      opts="$(rewrite_plusarg "$opts" "$key" "$value")"
+    fi
+  done
+
+  if [ -n "${SC_HUB_OVERRIDE_PLUSARGS-}" ]; then
+    opts+=" ${SC_HUB_OVERRIDE_PLUSARGS}"
+  fi
+  printf '%s' "$opts"
+}
+
+coverage_ucdb_path() {
+  local case_id="$1"
+  local bus="$2"
+  local profile="$3"
+  local desc="$4"
+  local subrun_idx="$5"
+  local cov_dir="${COV_DIR:-${TB_DIR}/transcript/coverage}"
+  local run_tag="${RUN_TAG-}"
+  local stem
+  local desc_tag
+
+  mkdir -p "$cov_dir"
+  desc_tag="$(printf '%s' "$desc" | tr ':/ +' '____' | tr -cd '[:alnum:]_.-')"
+  stem="${case_id}_${bus}_${profile}_${desc_tag}_s${subrun_idx}"
+  stem="$(printf '%s' "$stem" | tr ':/ +' '____' | tr -cd '[:alnum:]_.-')"
+  if [ -n "$run_tag" ]; then
+    stem+="_$(printf '%s' "$run_tag" | tr ':/ +' '____' | tr -cd '[:alnum:]_.-')"
+  fi
+  printf '%s/%s.ucdb' "$cov_dir" "$stem"
+}
 
 run_uvm_subrun() {
   local bus="$1"
   local desc="$2"
   local vlog_opts="$3"
   local vsim_opts="$4"
+  local ucdb_out=""
 
   printf '    subrun: %s (%s)\n' "$desc" "$bus"
+  cov_subrun_index=$((cov_subrun_index + 1))
+  if [ "${COV_ENABLE:-0}" = "1" ]; then
+    ucdb_out="$(coverage_ucdb_path "${CURRENT_CASE_ID:-case}" "$bus" "${CURRENT_PROFILE:-${desc}}" "$desc" "$cov_subrun_index")"
+  fi
   if (
     cd "$TB_DIR"
     BUS_TYPE="$bus" \
     VLOG_OPTS="$vlog_opts" \
     VSIM_OPTS="$vsim_opts" \
+    COV_ENABLE="${COV_ENABLE:-0}" \
+    UCDB_OUT="$ucdb_out" \
     "$SCRIPT_DIR/run_uvm.sh" sc_hub_case_test
   ); then
     return 0
@@ -64,6 +148,9 @@ run_case_once() {
   if [ -n "$extra_vsim" ]; then
     vsim_opts+=" ${extra_vsim}"
   fi
+  vsim_opts="$(apply_runtime_overrides "$vsim_opts")"
+  CURRENT_CASE_ID="$case_id"
+  CURRENT_PROFILE="$profile"
   run_uvm_subrun "$bus" "${case_id}:${profile}" "$vlog_opts" "$vsim_opts"
 }
 
@@ -90,6 +177,9 @@ run_perf_stream_case() {
   if [ -n "$extra_vsim" ]; then
     vsim_opts+=" ${extra_vsim}"
   fi
+  vsim_opts="$(apply_runtime_overrides "$vsim_opts")"
+  CURRENT_CASE_ID="$case_id"
+  CURRENT_PROFILE=perf_stream
   run_uvm_subrun "$bus" "${case_id}:perf_stream" "$extra_vlog" "$vsim_opts"
 }
 
@@ -410,6 +500,12 @@ run_one() {
       done
       ;;
 
+    T356)
+      run_perf_stream_case "$case_id" "AVALON" "UNIFORM4_20" ""         "+SC_HUB_TXN_COUNT=768 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=35 +SC_HUB_INTERNAL_PCT=10" 320000
+      ;;
+    T357)
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=768 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=35 +SC_HUB_ORDERING_PCT=10 +SC_HUB_ATOMIC_PCT=5 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 360000
+      ;;
     *)
       echo "run_uvm_case.sh: unsupported case id ${case_id}" >&2
       current_case_rc=2
