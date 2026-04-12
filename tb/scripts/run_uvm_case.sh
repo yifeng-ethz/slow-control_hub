@@ -11,8 +11,10 @@ usage() {
   cat <<'EOF'
 Usage:
   run_uvm_case.sh T123 [T124 ...]
+  run_uvm_case.sh P001 [P002 ...]
+  run_uvm_case.sh CROSS-001 CROSS-002
 
-Runs the UVM-mapped DV plan IDs through `sc_hub_case_test`.
+Runs the promoted UVM-mapped DV plan IDs through `sc_hub_case_test`.
 EOF
 }
 
@@ -22,7 +24,7 @@ if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
 fi
 
 if [ "$#" -eq 0 ]; then
-  echo "run_uvm_case.sh: at least one Txxx case id is required" >&2
+  echo "run_uvm_case.sh: at least one case id is required (Txxx, Pxxx, or CROSS-xxx)" >&2
   exit 2
 fi
 
@@ -47,6 +49,43 @@ rewrite_plusarg() {
   else
     printf '%s' "$opts +${key}=${value}"
   fi
+}
+
+extract_plusarg_value() {
+  local opts="$1"
+  local key="$2"
+
+  python3 - "$opts" "$key" <<'PY2'
+import re
+import sys
+opts = sys.argv[1]
+key = sys.argv[2]
+match = re.search(rf'(?<!\S)\+{re.escape(key)}=([^\s]+)', opts)
+print(match.group(1) if match else "")
+PY2
+}
+
+scale_timeout_for_txn_count() {
+  local timeout_cycles="$1"
+  local base_txn_count="$2"
+  local plusargs="$3"
+  local effective_txn_count="${SC_HUB_TXN_COUNT_OVERRIDE:-}"
+
+  if [ -z "$effective_txn_count" ]; then
+    effective_txn_count="$(extract_plusarg_value "$plusargs" "SC_HUB_TXN_COUNT")"
+  fi
+  if ! [[ "$effective_txn_count" =~ ^[0-9]+$ ]]; then
+    effective_txn_count="$base_txn_count"
+  fi
+  if ! [[ "$timeout_cycles" =~ ^[0-9]+$ ]] || ! [[ "$base_txn_count" =~ ^[0-9]+$ ]] || [ "$base_txn_count" -eq 0 ]; then
+    printf '%s' "$timeout_cycles"
+    return 0
+  fi
+  if [ "$effective_txn_count" -le "$base_txn_count" ]; then
+    printf '%s' "$timeout_cycles"
+    return 0
+  fi
+  printf '%s' $(( (timeout_cycles * effective_txn_count + base_txn_count - 1) / base_txn_count ))
 }
 
 apply_runtime_overrides() {
@@ -93,7 +132,7 @@ coverage_ucdb_path() {
   local profile="$3"
   local desc="$4"
   local subrun_idx="$5"
-  local cov_dir="${COV_DIR:-${TB_DIR}/transcript/coverage}"
+  local cov_dir="${COV_DIR:-${TB_DIR}/sim_runs/coverage}"
   local run_tag="${RUN_TAG-}"
   local stem
   local desc_tag
@@ -165,6 +204,11 @@ run_case_both() {
   run_case_once "$case_id" "AXI4"   "$profile" "$vlog_opts" "$extra_vsim" "$timeout_cycles"
 }
 
+normalize_case_id() {
+  local case_id_raw="$1"
+  python3 "$SCRIPT_DIR/resolve_case_alias.py" --allow T,P,CROSS "$case_id_raw"
+}
+
 run_perf_stream_case() {
   local case_id="$1"
   local bus="$2"
@@ -196,12 +240,20 @@ run_speedup_pair() {
 }
 
 run_one() {
-  local case_id="$1"
+  local raw_case_id="$1"
+  local case_id
+
+  case_id="$(normalize_case_id "$raw_case_id")" || {
+    fail_count=$((fail_count + 1))
+    run_count=$((run_count + 1))
+    echo "[FAIL] ${raw_case_id}"
+    return 0
+  }
 
   run_count=$((run_count + 1))
   current_case_rc=0
   printf '%s\n' "----------------------------------------------------------------"
-  printf '[%d] run_uvm_case %s\n' "$run_count" "$case_id"
+  printf '[%d] run_uvm_case %s -> %s\n' "$run_count" "$raw_case_id" "$case_id"
 
   case "$case_id" in
     T123)
@@ -506,6 +558,62 @@ run_one() {
     T357)
       run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=768 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=35 +SC_HUB_ORDERING_PCT=10 +SC_HUB_ATOMIC_PCT=5 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 360000
       ;;
+    T358)
+      local bus err_kind
+      for bus in AVALON AXI4; do
+        for err_kind in missing_trailer data_count_mismatch length_overflow fifo_overflow truncated bad_dtype; do
+          run_case_once "$case_id" "$bus" "error_case" ""             "+SC_HUB_ERR_KIND=${err_kind} +SC_HUB_ERR_OP=write" 120000
+        done
+      done
+      ;;
+    T359)
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_MASK_PCT=40 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1" 260000
+      ;;
+    T360)
+      run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_MASK_PCT=40 +SC_HUB_ORDERING_PCT=20 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 260000
+      ;;
+    T361)
+      run_case_both "$case_id" "perf_stream" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100" 260000
+      ;;
+    T362)
+      run_perf_stream_case "$case_id" "AVALON" "ADDRESSDEP" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=50 +SC_HUB_ADDR_MODE=feb +SC_HUB_NONINCREMENT_PCT=25 +SC_HUB_MASK_PCT=20" 260000
+      ;;
+    T363)
+      run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=60 +SC_HUB_ORDERING_PCT=20 +SC_HUB_ATOMIC_PCT=5 +SC_HUB_NONINCREMENT_PCT=20 +SC_HUB_UPLINK_BP_PERIOD=16 +SC_HUB_UPLINK_BP_LOW_CYCLES=8 +SC_HUB_UPLINK_BP_START_DELAY=32 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 320000
+      ;;
+    T364)
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=60 +SC_HUB_ORDERING_PCT=15 +SC_HUB_ATOMIC_PCT=5 +SC_HUB_NONINCREMENT_PCT=20 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_UPLINK_BP_PERIOD=16 +SC_HUB_UPLINK_BP_LOW_CYCLES=8 +SC_HUB_UPLINK_BP_START_DELAY=32 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 340000
+      ;;
+    T365)
+      run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100 +SC_HUB_ORDERING_PCT=25 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 280000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100 +SC_HUB_ORDERING_PCT=25 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 320000
+      ;;
+    T366)
+      local t366_vsim t366_timeout
+      t366_vsim="+SC_HUB_TXN_COUNT=96 +SC_HUB_FIXED_LEN=256 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100"
+      t366_timeout="$(scale_timeout_for_txn_count 340000 96 "$t366_vsim")"
+      run_case_both "$case_id" "perf_stream" "" "$t366_vsim" "$t366_timeout"
+      ;;
+    T367)
+      run_perf_stream_case "$case_id" "AVALON" "UNIFORM4_20" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=8 +SC_HUB_READ_PCT=60 +SC_HUB_NONINCREMENT_PCT=25 +SC_HUB_ERR_EVERY=11 +SC_HUB_ERR_MODE=rotate +SC_HUB_INTERNAL_PCT=10" 320000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=8 +SC_HUB_READ_PCT=60 +SC_HUB_NONINCREMENT_PCT=25 +SC_HUB_ERR_EVERY=11 +SC_HUB_ERR_MODE=rotate +SC_HUB_INTERNAL_PCT=10 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1" 340000
+      ;;
+    T368)
+      run_perf_stream_case "$case_id" "AVALON" "ADDRESSDEP" ""         "+SC_HUB_TXN_COUNT=256 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=8 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=40 +SC_HUB_INTERNAL_MODE=capmix +SC_HUB_MASK_PCT=10 +SC_HUB_NONINCREMENT_PCT=15" 260000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=256 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=8 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=40 +SC_HUB_INTERNAL_MODE=capmix +SC_HUB_MASK_PCT=10 +SC_HUB_NONINCREMENT_PCT=15 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1" 280000
+      ;;
+    T369)
+      run_perf_stream_case "$case_id" "AVALON" "UNIFORM4_20" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100 +SC_HUB_ERR_EVERY=7 +SC_HUB_ERR_MODE=rotate" 280000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=50 +SC_HUB_NONINCREMENT_PCT=100 +SC_HUB_ERR_EVERY=7 +SC_HUB_ERR_MODE=rotate +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1" 320000
+      ;;
+    T370)
+      run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=4 +SC_HUB_READ_PCT=55 +SC_HUB_MASK_PCT=60 +SC_HUB_MASK_MODE=rotate +SC_HUB_LOCAL_FEB_TYPE=scifi +SC_HUB_ORDERING_PCT=25 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_NONINCREMENT_PCT=20 +SC_HUB_INTERNAL_PCT=10 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 320000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_BURST_MIN=1 +SC_HUB_BURST_MAX=16 +SC_HUB_READ_PCT=55 +SC_HUB_MASK_PCT=60 +SC_HUB_MASK_MODE=rotate +SC_HUB_LOCAL_FEB_TYPE=scifi +SC_HUB_ORDERING_PCT=20 +SC_HUB_ORDER_DOMAINS=4 +SC_HUB_ATOMIC_PCT=5 +SC_HUB_NONINCREMENT_PCT=20 +SC_HUB_INTERNAL_PCT=10 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 360000
+      ;;
+    T371)
+      run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=1 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=85 +SC_HUB_INTERNAL_MODE=csr_sweep +SC_HUB_ORDERING_PCT=5 +SC_HUB_NONINCREMENT_PCT=0 +SC_HUB_MASK_PCT=0 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 280000
+      run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=1 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=85 +SC_HUB_INTERNAL_MODE=csr_sweep +SC_HUB_ORDERING_PCT=5 +SC_HUB_ATOMIC_PCT=0 +SC_HUB_NONINCREMENT_PCT=0 +SC_HUB_MASK_PCT=0 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 320000
+      ;;
     *)
       echo "run_uvm_case.sh: unsupported case id ${case_id}" >&2
       current_case_rc=2
@@ -513,10 +621,10 @@ run_one() {
   esac
   if [ "$current_case_rc" -eq 0 ]; then
     pass_count=$((pass_count + 1))
-    echo "[PASS] ${case_id}"
+    echo "[PASS] ${raw_case_id}"
   else
     fail_count=$((fail_count + 1))
-    echo "[FAIL] ${case_id}"
+    echo "[FAIL] ${raw_case_id}"
   fi
 }
 

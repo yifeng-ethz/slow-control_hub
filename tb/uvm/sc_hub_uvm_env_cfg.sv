@@ -11,6 +11,10 @@ class sc_hub_uvm_env_cfg extends uvm_object;
   bit          enable_atomic;
   bit          enable_ordering;
   bit          enable_ooo;
+  bit          supports_atomic;
+  bit          supports_ordering;
+  bit          supports_ooo;
+  bit          supports_hub_cap;
   bit          enable_perf;
   bit          enable_mixed;
   bit          enable_bp;
@@ -29,6 +33,7 @@ class sc_hub_uvm_env_cfg extends uvm_object;
   int unsigned perf_burst_step;
   int unsigned perf_repeat;
   int unsigned sweep_idle_cycles;
+  feb_type_e   local_feb_type;
 
   function new(string name = "sc_hub_uvm_env_cfg");
     super.new(name);
@@ -42,6 +47,10 @@ class sc_hub_uvm_env_cfg extends uvm_object;
     enable_atomic          = 1'b0;
     enable_ordering        = 1'b0;
     enable_ooo             = 1'b0;
+    supports_atomic        = 1'b0;
+    supports_ordering      = 1'b0;
+    supports_ooo           = 1'b0;
+    supports_hub_cap       = 1'b1;
     enable_perf            = 1'b0;
     enable_mixed           = 1'b1;
     enable_bp              = 1'b1;
@@ -60,5 +69,6 @@ class sc_hub_uvm_env_cfg extends uvm_object;
     perf_burst_step        = 2;
     perf_repeat            = 1;
     sweep_idle_cycles      = 16;
+    local_feb_type         = FEB_TYPE_ALL;
   endfunction
 endclass

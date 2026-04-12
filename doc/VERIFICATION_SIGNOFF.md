@@ -200,6 +200,8 @@ transaction point of each rerun.
 | `T365` | aggregate nonincr+ordering | 7.815 | 41.88 | 62.29 | 56.00 | 22.59 | 64.14 | expensive for little incremental gain |
 | `T368` | aggregate internal `capmix` | 7.359 | 49.64 | 67.61 | 63.54 | 29.75 | 62.52 | best structural broadener after `T359` |
 | `T369` | aggregate nonincr+error | 7.945 | 41.99 | 63.64 | 57.82 | 20.57 | 58.91 | best functional broadener after `T359` |
+| `T370` | aggregate local-SciFi masked mix | 8.513 | 51.70 | 68.39 | 65.36 | 39.58 | 76.29 | best toggle-only detector-mask broadener |
+| `T371` | aggregate internal CSR sweep | 7.754 | 45.35 | 65.62 | 58.24 | 23.57 | 57.39 | internal CSR map structural broadener, no new covergroups |
 
 ### Marginal gain over the promoted base
 
@@ -213,27 +215,29 @@ Base suite for this comparison: `T341 + T356 + T357`.
 | `T365` | base + `T359` | +0.08 | +0.20 | 0.010 | do not promote |
 | `T368` | base + `T359` | +0.59 | +0.06 | 0.080 | promote for structural breadth |
 | `T369` | base + `T359` | +0.42 | +2.23 | 0.053 | promote for functional breadth |
+| `T370` | base + `T359 + T368 + T369` | +0.61 | +0.00 | 0.072 | targeted toggle broadener, not core |
+| `T371` | base + `T359 + T368 + T369 + T370` | +0.24 | +0.00 | 0.031 | targeted internal-CSR broadener only |
 
 ### Current best promoted suite
 
-Using `T341 + T356 + T357 + T359 + T368 + T369`, the merged current-tree suite
-reaches:
+Using `T341 + T356 + T357 + T359 + T368 + T369 + T370 + T371`, the merged
+current-tree suite reaches:
 
-- total structural coverage: `60.16%`
-- statements: `67.16%`
-- branches: `63.61%`
+- total structural coverage: `61.01%`
+- statements: `67.70%`
+- branches: `64.80%`
 - conditions: `39.72%`
 - expressions: `43.24%`
 - FSM states: `100.00%`
 - FSM transitions: `66.66%`
-- toggles: `40.73%`
+- toggles: `44.95%`
 - implemented covergroups: `78.86%`
-- cumulative wall time: `31.183 s`
+- cumulative wall time: `47.383 s`
 
-This is a real improvement over the older three-case core (`53.29%` total,
-`70.09%` covergroups), but it is still far below the exact thresholds required
-by the referenced `dv-workflow`. The remaining gap is therefore no longer case
-selection guesswork; it is deeper structural/plan closure work.
+Relative to the older six-case promoted suite (`60.16%` total, `78.86%`
+covergroups), `T370` and `T371` mainly buy structural/toggle breadth. They do
+not change the functional-coverage ceiling, so the remaining gap is no longer
+case selection guesswork; it is deeper structural/plan closure work.
 
 ## Per-Case Final Coverage
 
@@ -395,6 +399,8 @@ Targeted, non-routine cases:
 - `T343` for ordering+atomic interaction retention
 - `T351` for AXI4 latency-profile / OoO characterization
 - `T363` only when extra structural/toggle broadening is desired
+- `T370` when detector-mask/local-`FEB_TYPE` toggle breadth matters more than functional growth
+- `T371` when internal CSR map reachability is the target and the scoreboard/ref-model contract itself needs retention coverage
 - do not routinely promote `T364` or `T365`; measured marginal gain is too low
 
 ## Open Items

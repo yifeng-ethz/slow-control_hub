@@ -96,15 +96,97 @@ class sc_hub_case_test extends sc_hub_base_test;
 
   function automatic logic [23:0] next_internal_addr(
     input bit          is_write,
-    input int unsigned txn_idx
+    input int unsigned txn_idx,
+    input string       internal_mode = "default"
   );
+    string mode_lower;
+
+    mode_lower = internal_mode.tolower();
     if (is_write) begin
+      if (mode_lower == "csr_sweep") begin
+        case (txn_idx % 6)
+          0: return INTERNAL_CSR_BASE_CONST + 24'h000001;
+          1: return INTERNAL_CSR_BASE_CONST + 24'h000002;
+          2: return INTERNAL_CSR_BASE_CONST + 24'h000006;
+          3: return INTERNAL_CSR_BASE_CONST + 24'h000009;
+          4: return INTERNAL_CSR_BASE_CONST + 24'h000018;
+          default: return INTERNAL_CSR_BASE_CONST + 24'h00001C;
+        endcase
+      end
       return INTERNAL_CSR_BASE_CONST + 24'h000006;
+    end
+
+    if (mode_lower == "capmix") begin
+      case (txn_idx % 4)
+        0: return INTERNAL_CSR_BASE_CONST + 24'h000000;
+        1: return INTERNAL_CSR_BASE_CONST + 24'h000001;
+        2: return INTERNAL_CSR_BASE_CONST + 24'h00001F;
+        default: return INTERNAL_CSR_BASE_CONST + 24'h00001C;
+      endcase
+    end
+
+    if (mode_lower == "csr_sweep") begin
+      case (txn_idx % 8)
+        0: return INTERNAL_CSR_BASE_CONST + 24'h000000;
+        1: return INTERNAL_CSR_BASE_CONST + 24'h000001;
+        2: return INTERNAL_CSR_BASE_CONST + 24'h000002;
+        3: return INTERNAL_CSR_BASE_CONST + 24'h000006;
+        4: return INTERNAL_CSR_BASE_CONST + 24'h000009;
+        5: return INTERNAL_CSR_BASE_CONST + 24'h000018;
+        6: return INTERNAL_CSR_BASE_CONST + 24'h00001C;
+        default: return INTERNAL_CSR_BASE_CONST + 24'h00001F;
+      endcase
     end
 
     case (txn_idx % 2)
       0: return INTERNAL_CSR_BASE_CONST + 24'h000000;
       default: return INTERNAL_CSR_BASE_CONST + 24'h000001;
+    endcase
+  endfunction
+
+  function automatic logic [31:0] next_internal_write_data(
+    input logic [23:0] word_addr,
+    input int unsigned txn_idx,
+    input string       internal_mode = "default"
+  );
+    string mode_lower;
+    logic [31:0] data_word;
+
+    mode_lower = internal_mode.tolower();
+    data_word  = 32'hA500_0000 + word_addr;
+    if (mode_lower != "csr_sweep") begin
+      return data_word;
+    end
+
+    case (word_addr)
+      (INTERNAL_CSR_BASE_CONST + 24'h000001): data_word = {30'd0, logic'(txn_idx % 4)};
+      (INTERNAL_CSR_BASE_CONST + 24'h000002): data_word = 32'h0000_0001;
+      (INTERNAL_CSR_BASE_CONST + 24'h000006): data_word = 32'hC300_0000 | txn_idx;
+      (INTERNAL_CSR_BASE_CONST + 24'h000009): data_word = {30'd0, 1'b1, logic'(txn_idx[0])};
+      (INTERNAL_CSR_BASE_CONST + 24'h000018): data_word = {31'd0, logic'(txn_idx[0])};
+      (INTERNAL_CSR_BASE_CONST + 24'h00001C): data_word = {30'd0, logic'(txn_idx % 4)};
+      default: begin end
+    endcase
+    return data_word;
+  endfunction
+
+  function automatic logic [1:0] calc_stream_forced_response(
+    input string       err_mode,
+    input int unsigned txn_idx
+  );
+    string err_mode_lower;
+
+    err_mode_lower = err_mode.tolower();
+    if (err_mode_lower == "slverr") begin
+      return 2'b10;
+    end
+    if (err_mode_lower == "decerr" || err_mode_lower == "timeout") begin
+      return 2'b11;
+    end
+
+    case (txn_idx % 3)
+      0: return 2'b10;
+      default: return 2'b11;
     endcase
   endfunction
 
@@ -142,8 +224,12 @@ class sc_hub_case_test extends sc_hub_base_test;
 
   task automatic wait_for_drain();
     int unsigned drain_cycles;
+    int unsigned drain_timeout_cycles;
 
-    for (drain_cycles = 0; drain_cycles < 50000; drain_cycles++) begin
+    drain_timeout_cycles = 50000;
+    void'($value$plusargs("SC_HUB_DRAIN_TIMEOUT_CYCLES=%d", drain_timeout_cycles));
+
+    for (drain_cycles = 0; drain_cycles < drain_timeout_cycles; drain_cycles++) begin
       if ((env_h.scoreboard_h.expected_q.size() == 0) &&
           (env_h.bus_agent_h.monitor_h.pending_cmd_q.size() == 0)) begin
         return;
@@ -204,17 +290,31 @@ class sc_hub_case_test extends sc_hub_base_test;
   task automatic run_error_case();
     sc_pkt_seq_item item_h;
     string          err_kind;
+    string          err_kind_lower;
     string          err_op;
     bit             is_write;
 
-    err_kind = get_string_plusarg("SC_HUB_ERR_KIND", "OKAY");
-    err_op   = get_string_plusarg("SC_HUB_ERR_OP", "read");
-    is_write = (err_op.tolower() == "write");
-    item_h   = build_item(is_write ? 24'h0002A0 : 24'h000280, 1, is_write);
-    item_h.forced_response = calc_forced_response(err_kind);
-    if (err_kind.toupper() == "TIMEOUT") begin
-      item_h.expect_error_payload = 1'b1;
-      item_h.error_payload_word   = 32'hEEEE_EEEE;
+    err_kind       = get_string_plusarg("SC_HUB_ERR_KIND", "OKAY");
+    err_kind_lower = err_kind.tolower();
+    err_op         = get_string_plusarg("SC_HUB_ERR_OP", "read");
+    is_write       = (err_op.tolower() == "write");
+    item_h         = build_item(is_write ? 24'h0002A0 : 24'h000280, 1, is_write);
+
+    if ((err_kind_lower == "missing_trailer") ||
+        (err_kind_lower == "data_count_mismatch") ||
+        (err_kind_lower == "length_overflow") ||
+        (err_kind_lower == "fifo_overflow") ||
+        (err_kind_lower == "truncated") ||
+        (err_kind_lower == "bad_dtype")) begin
+      item_h.malformed      = 1'b1;
+      item_h.malformed_kind = err_kind_lower;
+      item_h.expect_reply   = 1'b0;
+    end else begin
+      item_h.forced_response = calc_forced_response(err_kind);
+      if (err_kind.toupper() == "TIMEOUT") begin
+        item_h.expect_error_payload = 1'b1;
+        item_h.error_payload_word   = 32'hEEEE_EEEE;
+      end
     end
     issue_item(item_h);
   endtask
@@ -267,7 +367,14 @@ class sc_hub_case_test extends sc_hub_base_test;
     int unsigned    atomic_pct;
     int unsigned    malformed_every;
     int unsigned    nonincrement_pct;
+    int unsigned    mask_pct;
+    int unsigned    err_every;
+    string          err_mode;
+    string          internal_mode;
+    string          mask_mode;
     int unsigned    order_domains;
+    int unsigned    trace_start;
+    int unsigned    trace_end;
     bit             force_ooo;
     int unsigned    global_idx;
 
@@ -283,7 +390,14 @@ class sc_hub_case_test extends sc_hub_base_test;
     atomic_pct         = get_uint_plusarg("SC_HUB_ATOMIC_PCT", 0);
     malformed_every    = get_uint_plusarg("SC_HUB_MALFORMED_EVERY", 0);
     nonincrement_pct   = get_uint_plusarg("SC_HUB_NONINCREMENT_PCT", 0);
+    mask_pct           = get_uint_plusarg("SC_HUB_MASK_PCT", 0);
+    err_every          = get_uint_plusarg("SC_HUB_ERR_EVERY", 0);
+    err_mode           = get_string_plusarg("SC_HUB_ERR_MODE", "rotate");
+    internal_mode      = get_string_plusarg("SC_HUB_INTERNAL_MODE", "default");
+    mask_mode          = get_string_plusarg("SC_HUB_MASK_MODE", "rotate");
     order_domains      = get_uint_plusarg("SC_HUB_ORDER_DOMAINS", 1);
+    trace_start        = get_uint_plusarg("SC_HUB_TRACE_TXN_START", 0);
+    trace_end          = get_uint_plusarg("SC_HUB_TRACE_TXN_END", 0);
     force_ooo          = get_bit_plusarg("SC_HUB_FORCE_OOO", 1'b0);
     addr_mode          = get_string_plusarg("SC_HUB_ADDR_MODE", "linear");
     global_idx         = 0;
@@ -303,16 +417,20 @@ class sc_hub_case_test extends sc_hub_base_test;
         bit          atomic_pkt;
         bit          ordered_pkt;
         bit          nonincrement_pkt;
+        bit          masked_pkt;
+        bit          error_pkt;
         bit          is_write;
         int unsigned pkt_len;
         logic [23:0] pkt_addr;
 
         global_idx     = global_idx + 1;
         malformed_pkt  = (malformed_every != 0) && ((global_idx % malformed_every) == 0);
-        internal_pkt   = (!malformed_pkt) && ((next_lcg() % 100) < internal_pct);
-        atomic_pkt     = (!malformed_pkt) && (!internal_pkt) && ((next_lcg() % 100) < atomic_pct);
-        ordered_pkt    = (!malformed_pkt) && (!atomic_pkt) && ((next_lcg() % 100) < ordering_pct);
+        error_pkt      = (!malformed_pkt) && (err_every != 0) && ((global_idx % err_every) == 0);
+        internal_pkt   = (!malformed_pkt) && (!error_pkt) && ((next_lcg() % 100) < internal_pct);
+        atomic_pkt     = (!malformed_pkt) && (!error_pkt) && (!internal_pkt) && ((next_lcg() % 100) < atomic_pct);
+        ordered_pkt    = (!malformed_pkt) && (!error_pkt) && (!atomic_pkt) && ((next_lcg() % 100) < ordering_pct);
         nonincrement_pkt = (!malformed_pkt) && (!atomic_pkt) && ((next_lcg() % 100) < nonincrement_pct);
+        masked_pkt     = (!malformed_pkt) && (!error_pkt) && (!internal_pkt) && ((next_lcg() % 100) < mask_pct);
         is_write       = ((next_lcg() % 100) >= read_pct);
         pkt_len        = (fixed_len != 0) ? fixed_len : next_range(burst_min, burst_max);
         if (internal_pkt) begin
@@ -330,16 +448,41 @@ class sc_hub_case_test extends sc_hub_base_test;
           nonincrement_pkt = 1'b0;
         end
 
-        pkt_addr = internal_pkt ? next_internal_addr(is_write, global_idx)
+        pkt_addr = internal_pkt ? next_internal_addr(is_write, global_idx, internal_mode)
                                 : next_external_addr(addr_mode, global_idx);
 
         item_h = build_item(pkt_addr, pkt_len, is_write, nonincrement_pkt);
+        if (internal_pkt && is_write && item_h.data_words_q.size() != 0) begin
+          item_h.data_words_q[0] = next_internal_write_data(pkt_addr, global_idx, internal_mode);
+        end
+        if (masked_pkt) begin
+          string mask_mode_lower;
+
+          mask_mode_lower = mask_mode.tolower();
+          case (mask_mode_lower)
+            "mupix": item_h.mask_m = 1'b1;
+            "scifi": item_h.mask_s = 1'b1;
+            "tile":  item_h.mask_t = 1'b1;
+            "run":   item_h.mask_r = 1'b1;
+            default: begin
+              case (global_idx % 4)
+                0: item_h.mask_m = 1'b1;
+                1: item_h.mask_s = 1'b1;
+                2: item_h.mask_t = 1'b1;
+                default: item_h.mask_r = 1'b1;
+              endcase
+            end
+          endcase
+        end
         if (malformed_pkt) begin
           item_h.malformed      = 1'b1;
           item_h.malformed_kind = "missing_trailer";
           item_h.expect_reply   = 1'b0;
         end else begin
           item_h.force_ooo = force_ooo && !internal_pkt;
+          if (error_pkt) begin
+            item_h.forced_response = calc_stream_forced_response(err_mode, global_idx);
+          end
           if (ordered_pkt) begin
             item_h.ordered      = 1'b1;
             item_h.order_mode   = global_idx[0] ? SC_ORDER_ACQUIRE : SC_ORDER_RELEASE;
@@ -355,6 +498,34 @@ class sc_hub_case_test extends sc_hub_base_test;
           end
         end
 
+        if ((trace_start != 0) &&
+            (global_idx >= trace_start) &&
+            ((trace_end == 0) || (global_idx <= trace_end))) begin
+          `uvm_info(
+            get_type_name(),
+            $sformatf(
+              "TRACE_TXN idx=%0d addr=0x%06h len=%0d sc_type=%0d write=%0b mask[m,s,t,r]=%0b%0b%0b%0b ordered=%0b mode=%0d dom=%0d epoch=%0d atomic=%0b malformed=%0b forced_rsp=%0b",
+              global_idx,
+              item_h.start_address,
+              item_h.rw_length,
+              item_h.sc_type,
+              is_write,
+              item_h.mask_m,
+              item_h.mask_s,
+              item_h.mask_t,
+              item_h.mask_r,
+              item_h.ordered,
+              item_h.order_mode,
+              item_h.order_domain,
+              item_h.order_epoch,
+              item_h.atomic,
+              item_h.malformed,
+              item_h.forced_response
+            ),
+            UVM_LOW
+          );
+        end
+
         issue_item(item_h);
         wait_gap(gap_cycles);
       end
@@ -368,11 +539,14 @@ class sc_hub_case_test extends sc_hub_base_test;
     rng_state = get_uint_plusarg("SC_HUB_SEED", 32'h1);
     cfg.enable_ooo = get_bit_plusarg("SC_HUB_CFG_ENABLE_OOO", 1'b0);
     cfg.check_order_epoch_monotonic = get_bit_plusarg("SC_HUB_CHECK_ORDER_EPOCH_MONO", 1'b1);
+    cfg.rd_latency = get_uint_plusarg("SC_HUB_RD_LATENCY", cfg.rd_latency);
+    cfg.wr_latency = get_uint_plusarg("SC_HUB_WR_LATENCY", cfg.wr_latency);
   endfunction
 
   task run_phase(uvm_phase phase);
     phase.raise_objection(this);
     wait_for_testbench_settle();
+    configure_runtime_ctrls();
 
     if (profile == "burst_len_sweep") begin
       run_burst_len_sweep();
