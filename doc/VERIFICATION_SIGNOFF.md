@@ -41,8 +41,15 @@ Practical application here:
 
 ## Environment
 
-- Simulator: local Intel-packaged Questa tree with ETH floating-license chain
-- License status: `mtiverification` is available on `8161@lic-mentor.ethz.ch`, but the only exposed local simulator binary on this host still reports the `Questa Intel Starter FPGA Edition-64` banner
+- Installed simulators on this host: `questa_fse` and `questa_fe` under
+  `/data1/intelFPGA_pro/23.1/`
+- Full Edition status: the `questa_fe` binary is installed and reports the
+  correct Edition banner, and `mtiverification` is check-outable via
+  `lmutil lmdiag`, but live `vsim` startup still fails with `Invalid license
+  environment` on this host. So exact non-Starter compliance remains open.
+- Rerunnable working path for the measurements below: `questa_fse` using the
+  host local fixed-node Intel file `/data1/intelFPGA/LR-121070_License.dat`
+  through the existing `tb/Makefile` flow.
 - Coverage compile switches: `+cover=sbecft` and `-coverage`
 - Structural metrics captured: statements, branches, conditions, expressions,
   FSM states, FSM transitions, toggles
@@ -164,13 +171,69 @@ trend runs.
 - `T368`: PASS on both AVMM and AXI4 on the same RTL revision after the AXI4
   internal-write reply fix, covering heavy `UID/META/HUB_CAP/FEB_TYPE` traffic
   under concurrent mixed load
+- `T369`: PASS on both AVMM and AXI4 as an explicit fixed-address
+  nonincrementing error-propagation case (`L=4`, mixed read/write,
+  periodic `SLVERR/DECERR` injection)
 
 Practical consequence:
 
 - the old open `T367`/`T368` gap in the promoted PERF closure set is now closed
+- the explicit `NONINCR-ERROR` functional hole is also closed by `T369`
 - the remaining signoff gap is still overall coverage closure and exact
-  simulator-tier compliance with the referenced DV workflow, not these two
+  simulator-tier compliance with the referenced DV workflow, not these targeted
   functional regressions
+
+## Coverage-Enabled Promotion Sweep
+
+After the baseline note above, additional coverage-enabled reruns were executed
+on the current tree to decide which already-implemented cases are actually
+worth promoting into the routine suite. All numbers below use the final `256`
+transaction point of each rerun.
+
+### Standalone rerun results
+
+| Case | Profile | Wall s | Total | Stmt | Branch | Toggle | Covergroups | Notes |
+|------|---------|-------:|------:|-----:|-------:|-------:|------------:|-------|
+| `T359` | AXI4 mask-heavy | 3.733 | 51.29 | 65.24 | 58.17 | 21.87 | 53.09 | detector-mask / MSTR activity under OoO |
+| `T363` | AVALON BP+ord+atomic | 4.431 | 45.19 | 62.72 | 58.09 | 32.85 | 63.62 | structural/toggle broadener, little new functional coverage |
+| `T364` | AXI4 BP+ord+atomic | 3.999 | 57.29 | 66.37 | 63.18 | 33.89 | 64.70 | almost fully redundant with existing AXI4 core set |
+| `T365` | aggregate nonincr+ordering | 7.815 | 41.88 | 62.29 | 56.00 | 22.59 | 64.14 | expensive for little incremental gain |
+| `T368` | aggregate internal `capmix` | 7.359 | 49.64 | 67.61 | 63.54 | 29.75 | 62.52 | best structural broadener after `T359` |
+| `T369` | aggregate nonincr+error | 7.945 | 41.99 | 63.64 | 57.82 | 20.57 | 58.91 | best functional broadener after `T359` |
+
+### Marginal gain over the promoted base
+
+Base suite for this comparison: `T341 + T356 + T357`.
+
+| Added case | Reference suite | Delta total % | Delta cvg % | Delta total %/s | Assessment |
+|-----------|-----------------|--------------:|------------:|----------------:|------------|
+| `T359` | base | +1.64 | +1.59 | 0.439 | promote |
+| `T363` | base + `T359` | +0.40 | +0.00 | 0.090 | optional structural top-up only |
+| `T364` | base + `T359` | +0.03 | +0.00 | 0.008 | do not promote |
+| `T365` | base + `T359` | +0.08 | +0.20 | 0.010 | do not promote |
+| `T368` | base + `T359` | +0.59 | +0.06 | 0.080 | promote for structural breadth |
+| `T369` | base + `T359` | +0.42 | +2.23 | 0.053 | promote for functional breadth |
+
+### Current best promoted suite
+
+Using `T341 + T356 + T357 + T359 + T368 + T369`, the merged current-tree suite
+reaches:
+
+- total structural coverage: `60.16%`
+- statements: `67.16%`
+- branches: `63.61%`
+- conditions: `39.72%`
+- expressions: `43.24%`
+- FSM states: `100.00%`
+- FSM transitions: `66.66%`
+- toggles: `40.73%`
+- implemented covergroups: `78.86%`
+- cumulative wall time: `31.183 s`
+
+This is a real improvement over the older three-case core (`53.29%` total,
+`70.09%` covergroups), but it is still far below the exact thresholds required
+by the referenced `dv-workflow`. The remaining gap is therefore no longer case
+selection guesswork; it is deeper structural/plan closure work.
 
 ## Per-Case Final Coverage
 
@@ -320,17 +383,29 @@ Routine current-tree regression:
 - `T341` short
 - `T356` truncated at `256`
 - `T357` deep
+- `T359` promoted detector-mask / MSTR interaction case
+
+Extended signoff suite when more than the minimum routine regression is needed:
+
+- add `T368` for internal `UID/META/HUB_CAP/FEB_TYPE` capability traffic
+- add `T369` for fixed-address nonincrementing error propagation
 
 Targeted, non-routine cases:
 
 - `T343` for ordering+atomic interaction retention
 - `T351` for AXI4 latency-profile / OoO characterization
+- `T363` only when extra structural/toggle broadening is desired
+- do not routinely promote `T364` or `T365`; measured marginal gain is too low
 
 ## Open Items
 
-- Extend the current-tree coverage-trend flow to more promoted `T300+` cases only
-  where the expected marginal gain justifies the runtime.
+- Implement new cases for the still-uncovered interaction families rather than
+  continuing to sample low-yield existing cases. Highest-value remaining areas
+  are muted/masked ordering semantics, capability-contract checks, and exact
+  timeout/recovery boundaries.
 - Add unreachable-bin analysis or formal closure for the remaining uncovered
   structural space, following the plateau evidence above.
+- Resolve the `questa_fe` runtime checkout problem on this host so the flow can
+  satisfy the exact simulator-tier requirement of the referenced DV workflow.
 - Link future signoff updates back into the `DV_PLAN.md` feature matrix so the
   closure argument remains spec-traceable.
