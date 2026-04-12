@@ -88,6 +88,52 @@ module sc_hub_uvm_tb_top;
              dut_inst.wr_data_rdreq,
              dut_inst.dl_fifo_usedw,
              dut_inst.bp_usedw);
+    $display("sc_hub_uvm_tb_top: AVALON timeout wrapper pkt_rx_valid=%0b core_rx_ready=%0b pkt_addr=0x%05h pkt_len=%0d pkt_rx_addr=0x%05h pkt_rx_len=%0d drop_count=%0d drop_detail=0x%08h",
+             dut_inst.pkt_rx_valid,
+             dut_inst.core_rx_ready,
+             dut_inst.pkt_info.start_address,
+             dut_inst.pkt_info.rw_length,
+             dut_inst.pkt_rx_info.start_address,
+             dut_inst.pkt_rx_info.rw_length,
+             dut_inst.pkt_drop_count,
+             dut_inst.debug_drop_detail);
+    $display("sc_hub_uvm_tb_top: AVALON timeout core pending_pkt_count=%0d pending_ext_count=%0d bus_cmd_issued=%0b bus_cmd_is_read=%0b bus_cmd_noninc=%0b bus_cmd_addr=0x%05h bus_cmd_len=%0d",
+             dut_inst.core_inst.pending_pkt_count,
+             dut_inst.core_inst.pending_ext_count,
+             dut_inst.core_inst.bus_cmd_issued,
+             dut_inst.core_inst.bus_cmd_is_read_reg,
+             dut_inst.core_inst.bus_cmd_nonincrement_reg,
+             dut_inst.core_inst.bus_cmd_address_reg,
+             dut_inst.core_inst.bus_cmd_length_reg);
+    $display("sc_hub_uvm_tb_top: AVALON timeout core wr_valid=%0b wr_reload=%0b wr_word=0x%08h write_stream_index=%0d drain_remaining=%0d pkt_addr=0x%05h pkt_len=%0d suppress=%0b has_data=%0b",
+             dut_inst.core_inst.wr_data_valid_reg,
+             dut_inst.core_inst.wr_data_reload_pending,
+             dut_inst.core_inst.wr_data_word_reg,
+             dut_inst.core_inst.write_stream_index,
+             dut_inst.core_inst.drain_remaining,
+             dut_inst.core_inst.pkt_info_reg.start_address,
+             dut_inst.core_inst.pkt_info_reg.rw_length,
+             dut_inst.core_inst.reply_suppress_reg,
+             dut_inst.core_inst.reply_has_data_reg);
+    $display("sc_hub_uvm_tb_top: AVALON timeout bus cmd=%0b/%0b wr_data=%0b/%0b done=%0b busy=%0b timeout=%0b avm_write=%0b wait=%0b burst=%0d wr_rsp=%0b rsp=0x%0h",
+             dut_inst.bus_cmd_valid,
+             dut_inst.bus_cmd_ready,
+             dut_inst.bus_wr_data_valid,
+             dut_inst.bus_wr_data_ready,
+             dut_inst.bus_done,
+             dut_inst.bus_busy,
+             dut_inst.bus_timeout_pulse,
+             bus_vif.write,
+             bus_vif.waitrequest,
+             bus_vif.burstcount,
+             bus_vif.writeresponsevalid,
+             bus_vif.response);
+    $display("sc_hub_uvm_tb_top: AVALON timeout avmm words_seen=%0d cmd_addr=0x%05h cmd_len=%0d noninc=%0b timeout_counter=%0d",
+             dut_inst.avmm_handler_inst.words_seen,
+             dut_inst.avmm_handler_inst.cmd_address_reg,
+             dut_inst.avmm_handler_inst.cmd_length_reg,
+             dut_inst.avmm_handler_inst.cmd_nonincrement_reg,
+             dut_inst.avmm_handler_inst.timeout_counter);
 `endif
   endtask
 
@@ -106,6 +152,10 @@ module sc_hub_uvm_tb_top;
 `ifdef SC_HUB_BUS_AXI4
   sc_hub_axi4_if bus_vif(clk);
   sc_hub_avmm_if aux_avmm_vif(clk);
+  logic        axi4_accept_ar_resp_valid;
+  logic [1:0]  axi4_accept_ar_resp_code;
+  logic        axi4_accept_aw_resp_valid;
+  logic [1:0]  axi4_accept_aw_resp_code;
 `ifdef SC_HUB_TB_AXI4_OOO_DISABLED
   localparam bit AXI4_DUT_OOO_ENABLE = 1'b0;
 `else
@@ -128,6 +178,11 @@ module sc_hub_uvm_tb_top;
 `else
   sc_hub_avmm_if bus_vif(clk);
   sc_hub_axi4_if aux_axi4_vif(clk);
+  logic        avmm_accept_rd_resp_valid;
+  logic [1:0]  avmm_accept_rd_resp_code;
+  logic        avmm_accept_wr_resp_valid;
+  logic [1:0]  avmm_accept_wr_resp_code;
+  logic [8:0]  avmm_wr_cmd_beats_remaining;
 `ifdef SC_HUB_TB_AVALON_OUTSTANDING_LIMIT
   localparam int unsigned AVALON_DUT_OUTSTANDING_LIMIT = `SC_HUB_TB_AVALON_OUTSTANDING_LIMIT;
 `else
@@ -287,6 +342,81 @@ module sc_hub_uvm_tb_top;
   endtask
 `endif
 
+`ifdef SC_HUB_BUS_AXI4
+  always_comb begin
+    axi4_accept_aw_resp_valid = 1'b0;
+    axi4_accept_aw_resp_code  = 2'b00;
+    axi4_accept_ar_resp_valid = 1'b0;
+    axi4_accept_ar_resp_code  = 2'b00;
+
+    if (!rst && bus_vif.awvalid && bus_vif.awready) begin
+      bus_vif.peek_cmd_inject(1'b1, bus_vif.awaddr, bus_vif.awlen + 1,
+                              axi4_accept_aw_resp_valid, axi4_accept_aw_resp_code);
+    end
+    if (!rst && bus_vif.arvalid && bus_vif.arready) begin
+      bus_vif.peek_cmd_inject(1'b0, bus_vif.araddr, bus_vif.arlen + 1,
+                              axi4_accept_ar_resp_valid, axi4_accept_ar_resp_code);
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    bit inject_matched;
+    logic [1:0] inject_response;
+
+    if (rst) begin
+      bus_vif.clear_cmd_injects();
+    end else begin
+      if (bus_vif.awvalid && bus_vif.awready) begin
+        bus_vif.consume_cmd_inject(1'b1, bus_vif.awaddr, bus_vif.awlen + 1, inject_matched, inject_response);
+      end
+      if (bus_vif.arvalid && bus_vif.arready) begin
+        bus_vif.consume_cmd_inject(1'b0, bus_vif.araddr, bus_vif.arlen + 1, inject_matched, inject_response);
+      end
+    end
+  end
+`else
+  always_comb begin
+    avmm_accept_rd_resp_valid = 1'b0;
+    avmm_accept_rd_resp_code  = 2'b00;
+    avmm_accept_wr_resp_valid = 1'b0;
+    avmm_accept_wr_resp_code  = 2'b00;
+
+    if (!rst && bus_vif.read && !bus_vif.waitrequest) begin
+      bus_vif.peek_cmd_inject(1'b0, bus_vif.address, (bus_vif.burstcount == 0) ? 1 : bus_vif.burstcount,
+                              avmm_accept_rd_resp_valid, avmm_accept_rd_resp_code);
+    end
+    if (!rst && bus_vif.write && !bus_vif.waitrequest && (avmm_wr_cmd_beats_remaining == 0)) begin
+      bus_vif.peek_cmd_inject(1'b1, bus_vif.address, (bus_vif.burstcount == 0) ? 1 : bus_vif.burstcount,
+                              avmm_accept_wr_resp_valid, avmm_accept_wr_resp_code);
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    bit inject_matched;
+    logic [1:0] inject_response;
+
+    if (rst) begin
+      avmm_wr_cmd_beats_remaining <= '0;
+      bus_vif.clear_cmd_injects();
+    end else begin
+      if (bus_vif.read && !bus_vif.waitrequest) begin
+        bus_vif.consume_cmd_inject(1'b0, bus_vif.address, (bus_vif.burstcount == 0) ? 1 : bus_vif.burstcount,
+                                   inject_matched, inject_response);
+      end
+
+      if (bus_vif.write && !bus_vif.waitrequest) begin
+        if (avmm_wr_cmd_beats_remaining == 0) begin
+          bus_vif.consume_cmd_inject(1'b1, bus_vif.address, (bus_vif.burstcount == 0) ? 1 : bus_vif.burstcount,
+                                     inject_matched, inject_response);
+          avmm_wr_cmd_beats_remaining <= ((bus_vif.burstcount == 0) ? 1 : bus_vif.burstcount) - 1'b1;
+        end else begin
+          avmm_wr_cmd_beats_remaining <= avmm_wr_cmd_beats_remaining - 1'b1;
+        end
+      end
+    end
+  end
+`endif
+
   initial begin
     clk = 1'b0;
     forever #3.2 clk = ~clk;
@@ -330,6 +460,34 @@ module sc_hub_uvm_tb_top;
     repeat (timeout_cycles) @(posedge clk);
     dump_timeout_state();
     $fatal(1, "sc_hub_uvm_tb_top: timeout waiting for UVM test completion after %0d cycles", timeout_cycles);
+  end
+
+  initial begin
+    int unsigned bp_period;
+    int unsigned bp_low_cycles;
+    int unsigned bp_start_delay;
+    int unsigned bp_idx;
+
+    wait (!rst);
+    bp_period = 0;
+    bp_low_cycles = 0;
+    bp_start_delay = 0;
+    void'($value$plusargs("SC_HUB_UPLINK_BP_PERIOD=%d", bp_period));
+    void'($value$plusargs("SC_HUB_UPLINK_BP_LOW_CYCLES=%d", bp_low_cycles));
+    void'($value$plusargs("SC_HUB_UPLINK_BP_START_DELAY=%d", bp_start_delay));
+
+    if ((bp_period != 0) && (bp_low_cycles != 0)) begin
+      if (bp_low_cycles > bp_period) begin
+        bp_low_cycles = bp_period;
+      end
+      repeat (bp_start_delay) @(posedge clk);
+      forever begin
+        for (bp_idx = 0; bp_idx < bp_period; bp_idx++) begin
+          @(negedge clk);
+          sc_reply_vif.ready = (bp_idx >= bp_low_cycles);
+        end
+      end
+    end
   end
 
   initial begin
@@ -425,76 +583,6 @@ module sc_hub_uvm_tb_top;
   assign aux_axi4_vif.rst = rst;
 `endif
 
-  sc_hub_assertions assertions_inst (
-    .clk         (clk),
-    .rst         (rst),
-    .link_ready  (sc_pkt_vif.ready),
-    .link_data   (sc_pkt_vif.data),
-    .link_datak  (sc_pkt_vif.datak),
-    .uplink_valid(sc_reply_vif.valid),
-    .uplink_ready(sc_reply_vif.ready),
-    .uplink_data (sc_reply_vif.data),
-    .uplink_sop  (sc_reply_vif.sop),
-    .uplink_eop  (sc_reply_vif.eop),
-    .dl_fifo_usedw({6'd0, dut_inst.dl_fifo_usedw}),
-    .dl_fifo_full(dut_inst.dl_fifo_full),
-    .wr_data_rdreq(dut_inst.wr_data_rdreq),
-    .wr_data_empty(dut_inst.wr_data_empty),
-    .pkt_rx_download_ready(dut_inst.download_ready_int),
-    .pkt_rx_payload_space_ready(dut_inst.pkt_rx_inst.payload_space_ready),
-    .tx_reply_start(dut_inst.tx_reply_start),
-    .tx_reply_ready(dut_inst.tx_reply_ready),
-    .tx_reply_has_data(dut_inst.tx_reply_has_data),
-    .tx_reply_suppress(dut_inst.tx_reply_suppress),
-    .tx_reply_len(dut_inst.tx_reply_info.rw_length),
-    .bp_usedw({6'd0, dut_inst.bp_usedw}),
-    .dl_fifo_depth(16'(DUT_DL_FIFO_DEPTH)),
-    .bp_fifo_depth(16'(DUT_BP_FIFO_DEPTH))
-`ifdef SC_HUB_BUS_AXI4
-    ,
-    .axi_rd_done (dut_inst.bus_rd_done),
-    .axi_rd_done_tag (dut_inst.bus_rd_done_tag),
-    .axi_awid    (bus_vif.awid),
-    .axi_awaddr  (bus_vif.awaddr),
-    .axi_awlen   (bus_vif.awlen),
-    .axi_awsize  (bus_vif.awsize),
-    .axi_awburst (bus_vif.awburst),
-    .axi_awvalid (bus_vif.awvalid),
-    .axi_awready (bus_vif.awready),
-    .axi_wdata   (bus_vif.wdata),
-    .axi_wstrb   (bus_vif.wstrb),
-    .axi_wlast   (bus_vif.wlast),
-    .axi_wvalid  (bus_vif.wvalid),
-    .axi_wready  (bus_vif.wready),
-    .axi_bid     (bus_vif.bid),
-    .axi_bresp   (bus_vif.bresp),
-    .axi_bvalid  (bus_vif.bvalid),
-    .axi_bready  (bus_vif.bready),
-    .axi_arid    (bus_vif.arid),
-    .axi_araddr  (bus_vif.araddr),
-    .axi_arlen   (bus_vif.arlen),
-    .axi_arsize  (bus_vif.arsize),
-    .axi_arburst (bus_vif.arburst),
-    .axi_arvalid (bus_vif.arvalid),
-    .axi_arready (bus_vif.arready),
-    .axi_rid     (bus_vif.rid),
-    .axi_rdata   (bus_vif.rdata),
-    .axi_rresp   (bus_vif.rresp),
-    .axi_rlast   (bus_vif.rlast),
-    .axi_rvalid  (bus_vif.rvalid),
-    .axi_rready  (bus_vif.rready)
-`else
-    ,
-    .avm_read        (bus_vif.read),
-    .avm_write       (bus_vif.write),
-    .avm_address     (bus_vif.address),
-    .avm_writedata   (bus_vif.writedata),
-    .avm_waitrequest (bus_vif.waitrequest),
-    .avm_response    (bus_vif.response),
-    .avm_burstcount  (bus_vif.burstcount)
-`endif
-  );
-
 `ifdef SC_HUB_BUS_AXI4
   sc_hub_top_axi4 #(
     .INVERT_RD_SIG(0),
@@ -581,6 +669,10 @@ module sc_hub_uvm_tb_top;
     .rlast           (bus_vif.rlast),
     .rvalid          (bus_vif.rvalid),
     .rready          (bus_vif.rready),
+    .accept_ar_resp_valid(axi4_accept_ar_resp_valid),
+    .accept_ar_resp_code (axi4_accept_ar_resp_code),
+    .accept_aw_resp_valid(axi4_accept_aw_resp_valid),
+    .accept_aw_resp_code (axi4_accept_aw_resp_code),
     .inject_rd_error (bus_vif.inject_rd_error),
     .inject_wr_error (bus_vif.inject_wr_error),
     .inject_decode_error(bus_vif.inject_decode_error),
@@ -643,11 +735,122 @@ module sc_hub_uvm_tb_top;
     .avm_waitrequest       (bus_vif.waitrequest),
     .avm_readdatavalid     (bus_vif.readdatavalid),
     .avm_burstcount        (bus_vif.burstcount),
+    .accept_rd_resp_valid  (avmm_accept_rd_resp_valid),
+    .accept_rd_resp_code   (avmm_accept_rd_resp_code),
+    .accept_wr_resp_valid  (avmm_accept_wr_resp_valid),
+    .accept_wr_resp_code   (avmm_accept_wr_resp_code),
     .inject_rd_error       (bus_vif.inject_rd_error),
     .inject_wr_error       (bus_vif.inject_wr_error),
     .inject_decode_error   (bus_vif.inject_decode_error)
   );
+
+  always_ff @(posedge clk) begin
+    if (!rst && $test$plusargs("SC_HUB_TRACE_FLOW")) begin
+      if (dut_inst.pkt_rx_valid) begin
+        $display("TRACE_FLOW t=%0t RX_PUBLISH addr=0x%05h len=%0d sc_type=%0d internal=%0b out_valid=%0b core_rx_ready=%0b enq_stage=%0d queue=%0d",
+                 $time,
+                 dut_inst.pkt_rx_info.start_address,
+                 dut_inst.pkt_rx_info.rw_length,
+                 dut_inst.pkt_rx_info.sc_type,
+                 dut_inst.pkt_rx_is_internal,
+                 dut_inst.pkt_valid,
+                 dut_inst.core_rx_ready,
+                 dut_inst.pkt_rx_inst.enqueue_stage_count,
+                 dut_inst.pkt_rx_inst.pkt_queue_count);
+      end
+      if (dut_inst.pkt_valid && dut_inst.core_rx_ready) begin
+        $display("TRACE_FLOW t=%0t CORE_ACCEPT addr=0x%05h len=%0d sc_type=%0d internal=%0b pending=%0d pending_ext=%0d",
+                 $time,
+                 dut_inst.pkt_info.start_address,
+                 dut_inst.pkt_info.rw_length,
+                 dut_inst.pkt_info.sc_type,
+                 dut_inst.pkt_is_internal,
+                 dut_inst.core_inst.pending_pkt_count,
+                 dut_inst.core_inst.pending_ext_count);
+      end
+      if (dut_inst.pkt_drop_pulse) begin
+        $display("TRACE_FLOW t=%0t RX_DROP drop_count=%0d detail=0x%08h fifo_usedw=%0d",
+                 $time,
+                 dut_inst.pkt_drop_count,
+                 dut_inst.debug_drop_detail,
+                 dut_inst.dl_fifo_usedw);
+      end
+      if (dut_inst.bus_cmd_valid && dut_inst.bus_cmd_ready) begin
+        $display("TRACE_FLOW t=%0t BUS_CMD kind=%s addr=0x%05h len=%0d noninc=%0b pending=%0d pending_ext=%0d",
+                 $time,
+                 dut_inst.bus_cmd_is_read ? "RD" : "WR",
+                 dut_inst.bus_cmd_address,
+                 dut_inst.bus_cmd_length,
+                 dut_inst.bus_cmd_nonincrement,
+                 dut_inst.core_inst.pending_pkt_count,
+                 dut_inst.core_inst.pending_ext_count);
+      end
+      if (dut_inst.bus_wr_data_valid && dut_inst.bus_wr_data_ready) begin
+        $display("TRACE_FLOW t=%0t WR_BEAT addr=0x%05h idx=%0d data=0x%08h reload=%0b words_seen=%0d",
+                 $time,
+                 dut_inst.core_inst.pkt_info_reg.start_address,
+                 dut_inst.core_inst.write_stream_index,
+                 dut_inst.bus_wr_data,
+                 dut_inst.core_inst.wr_data_reload_pending,
+                 dut_inst.avmm_handler_inst.words_seen);
+      end
+      if (dut_inst.bus_done) begin
+        $display("TRACE_FLOW t=%0t BUS_DONE rsp=0x%0h addr=0x%05h len=%0d wr_idx=%0d rd_fill=%0d",
+                 $time,
+                 dut_inst.bus_response,
+                 dut_inst.core_inst.pkt_info_reg.start_address,
+                 dut_inst.core_inst.pkt_info_reg.rw_length,
+                 dut_inst.core_inst.write_stream_index,
+                 dut_inst.core_inst.read_fill_index);
+      end
+      if (bus_vif.read && !bus_vif.waitrequest) begin
+        $display("TRACE_FLOW t=%0t BUS_RD addr=0x%05h burst=%0d bfm_active=%0b bfm_addr=0x%05h bfm_beats=%0d",
+                 $time, bus_vif.address, bus_vif.burstcount,
+                 avmm_bfm_inst.read_active, avmm_bfm_inst.rd_addr_reg, avmm_bfm_inst.rd_beats_remaining);
+      end
+      if (dut_inst.tx_reply_start) begin
+        $display("TRACE_FLOW t=%0t RSP_START addr=0x%05h len=%0d suppress=%0b usedw=%0d",
+                 $time,
+                 dut_inst.tx_reply_info.start_address,
+                 dut_inst.tx_reply_info.rw_length,
+                 dut_inst.tx_reply_suppress,
+                 dut_inst.core_inst.rd_fifo_usedw);
+      end
+      if (dut_inst.tx_reply_done) begin
+        $display("TRACE_FLOW t=%0t RSP_DONE usedw=%0d", $time, dut_inst.core_inst.rd_fifo_usedw);
+      end
+      if (dut_inst.core_inst.rd_fifo_clear && (dut_inst.core_inst.rd_fifo_usedw != 0)) begin
+        $display("TRACE_FLOW t=%0t FIFO_CLEAR usedw=%0d", $time, dut_inst.core_inst.rd_fifo_usedw);
+      end
+      if (dut_inst.core_inst.rd_fifo_write_en) begin
+        $display("TRACE_FLOW t=%0t FIFO_WRITE pkt_addr=0x%05h data=0x%08h fill_idx=%0d suppress=%0b usedw=%0d bfm_addr=0x%05h bfm_rdata=0x%08h",
+                 $time,
+                 dut_inst.core_inst.pkt_info_reg.start_address,
+                 dut_inst.core_inst.rd_fifo_write_data,
+                 dut_inst.core_inst.read_fill_index,
+                 dut_inst.core_inst.reply_suppress_reg,
+                 dut_inst.core_inst.rd_fifo_usedw,
+                 avmm_bfm_inst.rd_addr_reg,
+                 avmm_bfm_inst.avm_readdata);
+      end
+    end
+  end
 `endif
+
+
+  always_ff @(posedge clk) begin
+    if (!rst && $test$plusargs("SC_HUB_TRACE_REPLY_STREAM")) begin
+      if (sc_reply_vif.valid) begin
+        $display("TRACE_REPLY_STREAM t=%0t v=%0b r=%0b sop=%0b eop=%0b data=0x%09h",
+                 $time,
+                 sc_reply_vif.valid,
+                 sc_reply_vif.ready,
+                 sc_reply_vif.sop,
+                 sc_reply_vif.eop,
+                 sc_reply_vif.data);
+      end
+    end
+  end
 
   initial begin
     uvm_config_db#(virtual sc_pkt_if)::set(null, "*", "sc_pkt_vif", sc_pkt_vif);

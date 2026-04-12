@@ -41,7 +41,8 @@ Practical application here:
 
 ## Environment
 
-- Simulator: Questa 23.1 with ETH floating license chain
+- Simulator: local Intel-packaged Questa tree with ETH floating-license chain
+- License status: `mtiverification` is available on `8161@lic-mentor.ethz.ch`, but the only exposed local simulator binary on this host still reports the `Questa Intel Starter FPGA Edition-64` banner
 - Coverage compile switches: `+cover=sbecft` and `-coverage`
 - Structural metrics captured: statements, branches, conditions, expressions,
   FSM states, FSM transitions, toggles
@@ -50,6 +51,62 @@ Practical application here:
 - Coverage-trend runs must be serialized per case. Parallel runs can race on the
   shared `modelsim.ini`/work setup and invalidate the run infrastructure even
   when the DUT is fine.
+
+
+## Functional Model Gap
+
+The current functional percentages in this note are measured on the **implemented**
+covergroups in `tb/uvm/sc_hub_cov_collector.sv`, not on the full closure intent
+from `tb/DV_PLAN.md`. The collector now already includes several families that
+older notes used to call out as missing: address-range classification,
+drop-reason bins, inter-command gap buckets, and OoO-state coverage are present
+in the current tree. The remaining gap is now mostly about **interaction**
+coverage rather than missing basic bins.
+
+Practical consequence:
+
+- the reported functional percentages are useful for tracking the **current**
+  collector
+- they should not yet be treated as closure of the **planned** functional model
+- the next closure work should prioritize interaction scenarios that stress the
+  collector crosses and the remaining BP/freelist-style intent from the plan,
+  then re-baseline the promoted suite
+
+Most important remaining functional case families, based on the current review:
+
+- FEB-type and detector-mask interaction under mixed traffic
+- nonincrementing plus ordering intersections
+- nonincrementing error propagation
+- backpressure combined with ordering and atomic lock behavior
+- multi-error recovery sequencing under sustained traffic
+- HUB_CAP capability-report verification against compile-time generics
+- multi-domain epoch-wrap behavior under active ordering traffic
+
+## Highest-Value Next Functional Cases
+
+These are the recommended next functional cases before adding more long random
+runtime:
+
+1. `NONINCR-BASIC-AVMM`: directed nonincrementing read/write reference with explicit same-address bus-beat checking.
+2. `NONINCR-BASIC-AXI4`: AXI4 fixed-burst equivalent with `ARBURST=FIXED` / repeated address semantics.
+3. `MUTE-MASK-OOO`: mixed muted and non-muted traffic with OoO enabled; verify skipped replies do not leak reorder slots.
+4. `MUTE-MASK-ORDERING`: muted release/acquire traffic; ordering visibility must still be correct even when reply emission is suppressed.
+5. `BP-RELEASE-DRAIN`: release drain under active uplink backpressure; verifies no hidden deadlock between barrier completion and BP FIFO pressure.
+6. `BP-ATOMIC-LOCK`: atomic lock while reply path is backpressured; lock release must not depend on reply drain timing.
+7. `CSR-BURST-AXI4-REJECT`: AXI4 illegal burst into the CSR window; closes a bus-type asymmetry in the current directed plan.
+8. `HUB-CAP-VERIFY`: read capability CSR and prove bits match the actual synthesized generic set.
+9. `NONINCR-ERROR`: nonincrementing transaction with injected bus error; verifies error propagation on the fixed-address path.
+10. `INTERLEAVED-ERROR-RECOVERY`: mixed success and error stream at moderate rate; verifies error state does not contaminate adjacent transactions.
+11. `EPOCH-WRAP-MULTI-DOMAIN`: simultaneous ordering-epoch wrap in more than one domain; extends the current single-domain wrap coverage.
+
+Coverage-model recommendation order:
+
+1. add explicit backpressure / reply-drain observability
+2. add freelist / resource-accounting observability
+3. strengthen interaction crosses around nonincrementing plus ordering and error recovery
+4. add capability / compile-time-contract observability (`HUB_CAP`)
+
+That ordering matches the remaining closure risk: not basic packet parsing, but hidden interaction faults between transport pressure, scheduling, recovery, and software-visible feature contracts.
 
 Trend artifacts copied into the repo:
 
@@ -89,6 +146,31 @@ Measured promoted cases on the current tree:
 - `T357`
 - `T343`
 - `T351`
+
+## Targeted Closure Reruns After Baseline
+
+The following cases were rerun after the baseline coverage publication to close
+specific functional gaps in the current tree. These reruns are **functional
+closure evidence**, not new inputs to the coverage tables below, because they
+were executed as targeted debug regressions rather than fresh coverage-enabled
+trend runs.
+
+- `T367`: PASS on both AVMM and AXI4 after two harness/DUT fixes:
+  - UVM per-transaction forced-response injection now reaches the BFMs instead
+    of relying on stale global error injection
+  - AXI4 internal-write admission now blocks new writes while an older
+    write-reply is still pending, preventing `write_reply_*` clobber under OoO
+    traffic with heavy internal CSR pressure
+- `T368`: PASS on both AVMM and AXI4 on the same RTL revision after the AXI4
+  internal-write reply fix, covering heavy `UID/META/HUB_CAP/FEB_TYPE` traffic
+  under concurrent mixed load
+
+Practical consequence:
+
+- the old open `T367`/`T368` gap in the promoted PERF closure set is now closed
+- the remaining signoff gap is still overall coverage closure and exact
+  simulator-tier compliance with the referenced DV workflow, not these two
+  functional regressions
 
 ## Per-Case Final Coverage
 
