@@ -1065,7 +1065,16 @@ begin
 
                         if (pkt_ignore_reg = '1') then
                             reply_has_data_reg <= '0';
-                            core_state         <= IDLING;
+                            if (
+                                pkt_is_read_func(pkt_info_reg) = false and
+                                pkt_info_reg.atomic_flag = '0' and
+                                unsigned(pkt_info_reg.rw_length) /= 0
+                            ) then
+                                reply_suppress_reg <= '1';
+                                core_state         <= INT_WR_DRAINING;
+                            else
+                                core_state         <= IDLING;
+                            end if;
                         elsif (unsupported_feature_v = true) then
                             response_reg_v     := SC_RSP_SLVERR_CONST;
                             reply_has_data_reg <= '0';
@@ -1149,8 +1158,10 @@ begin
                         core_state        <= INT_RD_PUSHING;
 
                     when INT_RD_PUSHING =>
-                        rd_fifo_write_en   <= '1';
-                        rd_fifo_write_data <= int_read_word_reg;
+                        if (reply_suppress_reg = '0') then
+                            rd_fifo_write_en   <= '1';
+                            rd_fifo_write_data <= int_read_word_reg;
+                        end if;
 
                         if (read_fill_index + 1 >= pkt_len_v) then
                             if (reply_suppress_reg = '1') then
@@ -1175,8 +1186,10 @@ begin
 
                         done_read_fill_v := read_fill_index;
                         if (i_bus_rd_data_valid = '1') then
-                            rd_fifo_write_en    <= '1';
-                            rd_fifo_write_data  <= i_bus_rd_data;
+                            if (reply_suppress_reg = '0') then
+                                rd_fifo_write_en   <= '1';
+                                rd_fifo_write_data <= i_bus_rd_data;
+                            end if;
                             ext_word_read_count <= sat_inc32_func(ext_word_read_count);
                             next_read_addr_v    := resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32);
                             if (pkt_is_nonincrementing_func(pkt_info_reg) = false) then
@@ -1198,7 +1211,11 @@ begin
                                 err_pulse_v := true;
                             end if;
                             if (done_read_fill_v < pkt_len_v) then
-                                core_state <= RD_PADDING;
+                                if (reply_suppress_reg = '1') then
+                                    core_state <= IDLING;
+                                else
+                                    core_state <= RD_PADDING;
+                                end if;
                             elsif (reply_suppress_reg = '1') then
                                 core_state <= IDLING;
                             else
@@ -1427,7 +1444,8 @@ begin
 
                     when WAITING_REPLY =>
                         if (i_tx_reply_done = '1') then
-                            core_state <= IDLING;
+                            rd_fifo_clear <= '1';
+                            core_state    <= IDLING;
                         elsif (
                             tx_reply_ready_q = '1' and
                             reply_has_data_reg = '1' and

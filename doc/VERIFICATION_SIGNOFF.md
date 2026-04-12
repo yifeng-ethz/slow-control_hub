@@ -174,11 +174,23 @@ trend runs.
 - `T369`: PASS on both AVMM and AXI4 as an explicit fixed-address
   nonincrementing error-propagation case (`L=4`, mixed read/write,
   periodic `SLVERR/DECERR` injection)
+- `T555`: PASS on both AVMM and AXI4 as the zero-trust `WAITING_WRITE_SPACE`
+  duplicate-payload regression: once one payload word has been observed while
+  payload space is blocked, any further non-idle/non-skip word forces packet
+  drop, preserves memory, increments `pkt_drop_count`, and the next well-formed
+  write still succeeds
+- `T556`: PASS on both AVMM and AXI4 as the locally masked multiword write
+  drain/regression: a masked local write with `mask_s=1` drains without reply,
+  leaves external memory and `EXT_PKT_WR/EXT_WORD_WR` unchanged, does not raise
+  `pkt_drop_count`, and a following unmasked write still completes normally
 
 Practical consequence:
 
 - the old open `T367`/`T368` gap in the promoted PERF closure set is now closed
 - the explicit `NONINCR-ERROR` functional hole is also closed by `T369`
+- the zero-trust blocked-payload parser contract and the masked-local-write
+  drain/recovery contract now both have directed proof on AVMM and AXI4 via
+  `T555` and `T556`
 - the remaining signoff gap is still overall coverage closure and exact
   simulator-tier compliance with the referenced DV workflow, not these targeted
   functional regressions

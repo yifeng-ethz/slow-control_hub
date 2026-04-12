@@ -8075,7 +8075,10 @@ module sc_hub_tb_top;
 
     report_sc_debug_state("T552 completed long SWB-style cross run");
   endtask
+`endif
 
+
+`ifndef SC_HUB_BUS_AXI4
   task automatic run_t553();
     logic [23:0] start_addr;
     logic [31:0] csr_word;
@@ -10047,6 +10050,203 @@ module sc_hub_tb_top;
         run_t554();
       end
 `endif
+      "T555": begin : run_t555_case
+        sc_cmd_t       cmd;
+        logic [31:0]   wr_words[$];
+        logic [31:0]   initial_words[$];
+        logic [31:0]   observed_words[$];
+        logic [31:0]   pkt_drop_count;
+        int unsigned   wait_cycles;
+
+        clear_hub_counters();
+        wr_words.delete();
+        initial_words.delete();
+        observed_words.delete();
+
+        for (int unsigned idx = 0; idx < 2; idx++) begin
+          initial_words.push_back(32'hC0DE_5500 + idx);
+          wr_words.push_back(32'hA500_5500 + idx);
+        end
+`ifdef SC_HUB_BUS_AXI4
+        axi4_bfm_inst.mem[18'h002a0] <= initial_words[0];
+        axi4_bfm_inst.mem[18'h002a1] <= initial_words[1];
+`else
+        avmm_bfm_inst.mem[18'h002a0] <= initial_words[0];
+        avmm_bfm_inst.mem[18'h002a1] <= initial_words[1];
+`endif
+
+        cmd = make_cmd(SC_WRITE, 24'h0002A0, wr_words.size());
+
+        force dut_inst.pkt_rx_inst.payload_space_granted = 1'b0;
+        drive_word_ignore_ready(make_preamble_word(cmd), 4'b0001);
+        drive_word_ignore_ready(make_addr_word(cmd), 4'b0000);
+        drive_word_ignore_ready(make_length_word(cmd), 4'b0000);
+        drive_word_ignore_ready(wr_words[0], 4'b0000);
+        drive_word_ignore_ready(wr_words[0], 4'b0000);
+        drive_word_ignore_ready({24'h0, K284_CONST}, 4'b0001);
+        release dut_inst.pkt_rx_inst.payload_space_granted;
+        driver_inst.drive_idle();
+
+        monitor_inst.assert_no_reply(400ns);
+        for (wait_cycles = 0; wait_cycles < 64; wait_cycles++) begin
+          if (dut_inst.pkt_rx_inst.rx_state == 0 &&
+              dut_inst.pkt_in_progress == 1'b0 &&
+              dut_inst.pkt_valid == 1'b0) begin
+            break;
+          end
+          wait_clks(1);
+        end
+
+        if (wait_cycles == 64 ||
+            dut_inst.pkt_rx_inst.rx_state != 0 ||
+            dut_inst.pkt_in_progress != 1'b0 ||
+            dut_inst.pkt_valid != 1'b0 ||
+            dut_inst.core_inst.ext_pkt_write_count != 32'd0 ||
+            dut_inst.core_inst.ext_word_write_count != 32'd0) begin
+          report_sc_debug_state("T555 expected duplicate payload under WAITING_WRITE_SPACE to drop and recover");
+          $error("sc_hub_tb_top: T555 expected zero-trust drop and quiescent recovery after duplicate payload while blocked");
+        end
+
+        read_bfm_words(24'h0002A0, wr_words.size(), observed_words);
+        for (int unsigned idx = 0; idx < observed_words.size(); idx++) begin
+          if (observed_words[idx] !== initial_words[idx]) begin
+            $error("sc_hub_tb_top: T555 expected blocked duplicate packet to leave memory unchanged idx=%0d exp=0x%08h act=0x%08h",
+                   idx, initial_words[idx], observed_words[idx]);
+          end
+        end
+
+        read_pkt_drop_count(pkt_drop_count);
+        if (pkt_drop_count != 32'd1) begin
+          report_sc_debug_state("T555 expected exactly one pkt_drop_count increment after zero-trust drop");
+          $error("sc_hub_tb_top: T555 expected pkt_drop_count=1 after duplicate blocked payload act=%0d",
+                 pkt_drop_count);
+        end
+
+        send_swb_style_cmd(cmd, wr_words, 1);
+        monitor_inst.wait_reply_cycles(captured_reply, 512);
+        if (captured_reply.echoed_length === 16'hffff) begin
+          report_sc_debug_state("T555 no reply after zero-trust recovery");
+          disable run_t555_case;
+        end
+
+        expect_write_reply(captured_reply, 24'h0002A0, wr_words.size());
+        check_bfm_words(24'h0002A0, wr_words);
+        if (dut_inst.core_inst.ext_pkt_write_count != 32'd1 ||
+            dut_inst.core_inst.ext_word_write_count != wr_words.size()) begin
+          report_sc_debug_state("T555 post-recovery diagnostics mismatch");
+          $error("sc_hub_tb_top: T555 expected follow-up write to succeed after zero-trust recovery pkt=%0d words=%0d",
+                 dut_inst.core_inst.ext_pkt_write_count,
+                 dut_inst.core_inst.ext_word_write_count);
+        end
+
+        report_sc_debug_state("T555 completed zero-trust WAITING_WRITE_SPACE duplicate-payload drop");
+      end
+      "T556": begin : run_t556_case
+        sc_cmd_t       cmd;
+        logic [31:0]   wr_words[$];
+        logic [31:0]   initial_words[$];
+        logic [31:0]   observed_words[$];
+        logic [31:0]   csr_word;
+        int unsigned   wait_cycles;
+
+        clear_hub_counters();
+        wr_words.delete();
+        initial_words.delete();
+        observed_words.delete();
+        set_local_feb_type(FEB_TYPE_SCIFI);
+
+        for (int unsigned idx = 0; idx < 3; idx++) begin
+          initial_words.push_back(32'hCAFE_5600 + idx);
+          wr_words.push_back(32'hBEEF_5600 + idx);
+        end
+`ifdef SC_HUB_BUS_AXI4
+        axi4_bfm_inst.mem[18'h012c0] <= initial_words[0];
+        axi4_bfm_inst.mem[18'h012c1] <= initial_words[1];
+        axi4_bfm_inst.mem[18'h012c2] <= initial_words[2];
+`else
+        avmm_bfm_inst.mem[18'h012c0] <= initial_words[0];
+        avmm_bfm_inst.mem[18'h012c1] <= initial_words[1];
+        avmm_bfm_inst.mem[18'h012c2] <= initial_words[2];
+`endif
+
+        cmd = make_cmd(SC_WRITE, 24'h0012C0, wr_words.size());
+        cmd.mask_s = 1'b1;
+        send_swb_style_cmd(cmd, wr_words, 1);
+        monitor_inst.assert_no_reply(400ns);
+
+        for (wait_cycles = 0; wait_cycles < 64; wait_cycles++) begin
+          if (dut_inst.pkt_rx_inst.rx_state == 0 &&
+              dut_inst.pkt_in_progress == 1'b0 &&
+              dut_inst.pkt_valid == 1'b0
+`ifdef SC_HUB_BUS_AXI4
+             ) begin
+`else
+              && dut_inst.core_inst.pending_pkt_count == 0 &&
+              dut_inst.core_inst.pending_ext_count == 0) begin
+`endif
+            break;
+          end
+          wait_clks(1);
+        end
+
+        if (wait_cycles == 64 ||
+            dut_inst.pkt_rx_inst.rx_state != 0 ||
+            dut_inst.pkt_in_progress != 1'b0 ||
+            dut_inst.pkt_valid != 1'b0
+`ifdef SC_HUB_BUS_AXI4
+           ) begin
+`else
+            || dut_inst.core_inst.pending_pkt_count != 0 ||
+            dut_inst.core_inst.pending_ext_count != 0) begin
+`endif
+          report_sc_debug_state("T556 expected locally masked write to drain and quiesce");
+          $error("sc_hub_tb_top: T556 expected locally masked multiword write to drain without stalling the hub");
+        end
+
+        read_bfm_words(24'h0012C0, wr_words.size(), observed_words);
+        for (int unsigned idx = 0; idx < observed_words.size(); idx++) begin
+          if (observed_words[idx] !== initial_words[idx]) begin
+            $error("sc_hub_tb_top: T556 masked write should not touch memory idx=%0d exp=0x%08h act=0x%08h",
+                   idx, initial_words[idx], observed_words[idx]);
+          end
+        end
+
+        read_csr_word(HUB_CSR_WO_EXT_PKT_WR_CONST, csr_word);
+        if (csr_word != 32'd0) begin
+          $error("sc_hub_tb_top: T556 masked write should not increment EXT_PKT_WR act=%0d", csr_word);
+        end
+        read_csr_word(HUB_CSR_WO_EXT_WORD_WR_CONST, csr_word);
+        if (csr_word != 32'd0) begin
+          $error("sc_hub_tb_top: T556 masked write should not increment EXT_WORD_WR act=%0d", csr_word);
+        end
+        read_pkt_drop_count(csr_word);
+        if (csr_word != 32'd0) begin
+          report_sc_debug_state("T556 masked write unexpectedly raised packet drop");
+          $error("sc_hub_tb_top: T556 expected pkt_drop_count to remain zero for a locally masked write");
+        end
+
+        cmd.mask_s = 1'b0;
+        send_swb_style_cmd(cmd, wr_words, 1);
+        monitor_inst.wait_reply_cycles(captured_reply, 512);
+        if (captured_reply.echoed_length === 16'hffff) begin
+          report_sc_debug_state("T556 no reply after masked-write drain recovery");
+          disable run_t556_case;
+        end
+
+        expect_write_reply(captured_reply, 24'h0012C0, wr_words.size());
+        check_bfm_words(24'h0012C0, wr_words);
+        read_csr_word(HUB_CSR_WO_EXT_PKT_WR_CONST, csr_word);
+        if (csr_word != 32'd1) begin
+          $error("sc_hub_tb_top: T556 follow-up unmasked write should increment EXT_PKT_WR to 1 act=%0d", csr_word);
+        end
+        read_csr_word(HUB_CSR_WO_EXT_WORD_WR_CONST, csr_word);
+        if (csr_word != wr_words.size()) begin
+          $error("sc_hub_tb_top: T556 follow-up unmasked write should increment EXT_WORD_WR to %0d act=%0d",
+                 wr_words.size(), csr_word);
+        end
+
+        report_sc_debug_state("T556 completed locally masked multiword write drain and recovery");
+      end
       "smoke_basic": begin
         run_smoke_basic();
       end
