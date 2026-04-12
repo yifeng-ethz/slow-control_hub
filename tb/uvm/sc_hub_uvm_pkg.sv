@@ -17,6 +17,13 @@ interface sc_reply_if(input logic clk);
 endinterface
 
 interface sc_hub_avmm_if(input logic clk);
+  typedef struct {
+    bit          is_write;
+    logic [17:0] address;
+    logic [8:0]  burst_length;
+    logic [1:0]  response;
+  } sc_hub_cmd_inject_t;
+
   logic        rst;
   logic [17:0] address;
   logic        read;
@@ -31,9 +38,89 @@ interface sc_hub_avmm_if(input logic clk);
   logic        inject_rd_error;
   logic        inject_wr_error;
   logic        inject_decode_error;
+  sc_hub_cmd_inject_t cmd_inject_q[$];
+
+  task automatic clear_cmd_injects();
+    cmd_inject_q.delete();
+  endtask
+
+  function automatic void enqueue_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    input logic [1:0]  response_i
+  );
+    sc_hub_cmd_inject_t inject_h;
+
+    if (response_i == 2'b00) begin
+      return;
+    end
+
+    inject_h.is_write     = is_write_i;
+    inject_h.address      = address_i;
+    inject_h.burst_length = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+    inject_h.response     = response_i;
+    cmd_inject_q.push_back(inject_h);
+  endfunction
+
+  function automatic void peek_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    output bit         matched_o,
+    output logic [1:0] response_o
+  );
+    logic [8:0] burst_length_norm;
+
+    matched_o         = 1'b0;
+    response_o        = 2'b00;
+    burst_length_norm = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+
+    for (int unsigned idx = 0; idx < cmd_inject_q.size(); idx++) begin
+      if ((cmd_inject_q[idx].is_write == is_write_i) &&
+          (cmd_inject_q[idx].address == address_i) &&
+          (cmd_inject_q[idx].burst_length == burst_length_norm)) begin
+        matched_o  = 1'b1;
+        response_o = cmd_inject_q[idx].response;
+        break;
+      end
+    end
+  endfunction
+
+  task automatic consume_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    output bit         matched_o,
+    output logic [1:0] response_o
+  );
+    logic [8:0] burst_length_norm;
+
+    matched_o         = 1'b0;
+    response_o        = 2'b00;
+    burst_length_norm = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+
+    for (int unsigned idx = 0; idx < cmd_inject_q.size(); idx++) begin
+      if ((cmd_inject_q[idx].is_write == is_write_i) &&
+          (cmd_inject_q[idx].address == address_i) &&
+          (cmd_inject_q[idx].burst_length == burst_length_norm)) begin
+        matched_o  = 1'b1;
+        response_o = cmd_inject_q[idx].response;
+        cmd_inject_q.delete(idx);
+        break;
+      end
+    end
+  endtask
 endinterface
 
 interface sc_hub_axi4_if(input logic clk);
+  typedef struct {
+    bit          is_write;
+    logic [17:0] address;
+    logic [8:0]  burst_length;
+    logic [1:0]  response;
+  } sc_hub_cmd_inject_t;
+
   logic        rst;
   logic [3:0]  awid;
   logic [17:0] awaddr;
@@ -71,6 +158,79 @@ interface sc_hub_axi4_if(input logic clk);
   logic        inject_decode_error;
   logic        inject_rresp_err;
   logic        inject_bresp_err;
+  sc_hub_cmd_inject_t cmd_inject_q[$];
+
+  task automatic clear_cmd_injects();
+    cmd_inject_q.delete();
+  endtask
+
+  function automatic void enqueue_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    input logic [1:0]  response_i
+  );
+    sc_hub_cmd_inject_t inject_h;
+
+    if (response_i == 2'b00) begin
+      return;
+    end
+
+    inject_h.is_write     = is_write_i;
+    inject_h.address      = address_i;
+    inject_h.burst_length = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+    inject_h.response     = response_i;
+    cmd_inject_q.push_back(inject_h);
+  endfunction
+
+  function automatic void peek_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    output bit         matched_o,
+    output logic [1:0] response_o
+  );
+    logic [8:0] burst_length_norm;
+
+    matched_o         = 1'b0;
+    response_o        = 2'b00;
+    burst_length_norm = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+
+    for (int unsigned idx = 0; idx < cmd_inject_q.size(); idx++) begin
+      if ((cmd_inject_q[idx].is_write == is_write_i) &&
+          (cmd_inject_q[idx].address == address_i) &&
+          (cmd_inject_q[idx].burst_length == burst_length_norm)) begin
+        matched_o  = 1'b1;
+        response_o = cmd_inject_q[idx].response;
+        break;
+      end
+    end
+  endfunction
+
+  task automatic consume_cmd_inject(
+    input bit          is_write_i,
+    input logic [17:0] address_i,
+    input int unsigned burst_length_i,
+    output bit         matched_o,
+    output logic [1:0] response_o
+  );
+    logic [8:0] burst_length_norm;
+
+    matched_o         = 1'b0;
+    response_o        = 2'b00;
+    burst_length_norm = (burst_length_i == 0) ? 9'd1 : burst_length_i[8:0];
+
+    for (int unsigned idx = 0; idx < cmd_inject_q.size(); idx++) begin
+      if ((cmd_inject_q[idx].is_write == is_write_i) &&
+          (cmd_inject_q[idx].address == address_i) &&
+          (cmd_inject_q[idx].burst_length == burst_length_norm)) begin
+        matched_o  = 1'b1;
+        response_o = cmd_inject_q[idx].response;
+        cmd_inject_q.delete(idx);
+        break;
+      end
+    end
+  endtask
 endinterface
 
 package sc_hub_uvm_pkg;
@@ -170,11 +330,11 @@ package sc_hub_uvm_pkg;
   endclass
 
   `include "sc_hub_uvm_env_cfg.sv"
-  `include "sc_pkt_seq_item.sv"
-  `include "sc_pkt_driver_uvm.sv"
-  `include "sc_pkt_monitor_uvm.sv"
-  `include "sc_pkt_agent.sv"
-  `include "bus_agent.sv"
+  `include "sc_hub_sc_agent/sc_pkt_seq_item.sv"
+  `include "sc_hub_sc_agent/sc_pkt_driver_uvm.sv"
+  `include "sc_hub_sc_agent/sc_pkt_monitor_uvm.sv"
+  `include "sc_hub_sc_agent/sc_pkt_agent.sv"
+  `include "sc_hub_bus_agent/bus_agent.sv"
   `include "sc_hub_scoreboard_uvm.sv"
   `include "sc_hub_cov_collector.sv"
   `include "sc_hub_ord_checker_uvm.sv"
@@ -192,7 +352,7 @@ package sc_hub_uvm_pkg;
   `include "sequences/sc_pkt_ordering_seq.sv"
   `include "sequences/sc_pkt_ooo_seq.sv"
   `include "sequences/sc_pkt_perf_sweep_seq.sv"
-  `include "sc_hub_base_test.sv"
-  `include "sc_hub_case_test.sv"
-  `include "sc_hub_sweep_test.sv"
+  `include "tests/sc_hub_base_test.sv"
+  `include "tests/sc_hub_case_test.sv"
+  `include "tests/sc_hub_sweep_test.sv"
 endpackage

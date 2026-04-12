@@ -203,6 +203,10 @@ architecture rtl of sc_hub_axi4_core is
     signal write_response_reg      : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal write_drain_remaining   : unsigned(15 downto 0) := (others => '0');
     signal write_stream_index      : unsigned(15 downto 0) := (others => '0');
+    signal write_ignore_drain      : std_logic := '0';
+    signal wr_data_valid_reg       : std_logic := '0';
+    signal wr_data_word_reg        : std_logic_vector(31 downto 0) := (others => '0');
+    signal wr_data_reload_pending  : std_logic := '0';
     signal write_reply_pending     : std_logic := '0';
     signal write_reply_has_data    : std_logic := '0';
     signal write_reply_data_word   : std_logic_vector(31 downto 0) := (others => '0');
@@ -269,6 +273,14 @@ architecture rtl of sc_hub_axi4_core is
         return value_in + 1;
     end function wrap_inc32_func;
 
+    function seq_precedes_func (
+        lhs : unsigned(7 downto 0);
+        rhs : unsigned(7 downto 0)
+    ) return boolean is
+    begin
+        return (lhs /= rhs and signed(lhs - rhs) < 0);
+    end function seq_precedes_func;
+
     function any_ext_busy_func (
         state_in : ext_slot_state_array_t
     ) return boolean is
@@ -324,7 +336,8 @@ begin
     rd_cmd_pending_live <= '1'
         when (
             rd_cmd_pending_valid = '1' and
-            ext_slot_state(rd_cmd_pending_slot) = SLOT_WAIT_ISSUE
+            ext_slot_state(rd_cmd_pending_slot) = SLOT_WAIT_ISSUE and
+            not (write_state = WR_ATOMIC_RD_WAIT_DATA and rd_cmd_pending_slot = 0)
         )
         else '0';
 
@@ -355,10 +368,12 @@ begin
     o_bus_wr_data_valid  <= '1'
         when (
             write_state = WR_ATOMIC_WR_RUNNING or
-            (write_state = WR_EXT_RUNNING and i_wr_data_empty = '0')
+            (write_state = WR_EXT_RUNNING and wr_data_valid_reg = '1')
         )
         else '0';
-    o_bus_wr_data        <= atomic_write_data_reg when (write_state = WR_ATOMIC_WR_RUNNING) else i_wr_data_q;
+    o_bus_wr_data        <= atomic_write_data_reg when (write_state = WR_ATOMIC_WR_RUNNING) else
+                           i_wr_data_q when (wr_data_reload_pending = '1') else
+                           wr_data_word_reg;
     o_wr_data_rdreq      <= '1'
         when (
             (
@@ -366,7 +381,7 @@ begin
                 write_drain_remaining > 0 and
                 i_wr_data_empty = '0'
             ) or
-            (write_state = WR_EXT_RUNNING and i_bus_wr_data_ready = '1' and i_wr_data_empty = '0')
+            (write_state = WR_EXT_RUNNING and i_bus_wr_data_ready = '1' and wr_data_valid_reg = '1')
         )
         else '0';
     o_rx_ready           <= rx_ready_int;
@@ -506,7 +521,7 @@ begin
                     end if;
                 end if;
             else
-                if (write_state = WR_IDLE) then
+                if (write_state = WR_IDLE and write_reply_pending = '0') then
                     if (internal_pkt_v) then
                         if (allow_ooo_v or busy_for_order_v = false) then
                             rx_ready_int <= '1';
@@ -572,8 +587,10 @@ begin
         variable tx_issue_ext_ready_live_v : boolean;
         variable rd_cmd_pending_valid_v    : std_logic;
         variable rd_cmd_pending_slot_v     : natural range 0 to OOO_SLOT_COUNT_G - 1;
+        variable rd_cmd_accepted_v         : boolean;
         variable diag_clear_pending_v      : std_logic;
         variable err_count_inc_pending_v   : std_logic;
+        variable ext_write_word_v          : std_logic_vector(31 downto 0);
     begin
         if rising_edge(i_clk) then
             if (i_rst = '1') then
@@ -635,6 +652,10 @@ begin
                 write_response_reg        <= SC_RSP_OK_CONST;
                 write_drain_remaining     <= (others => '0');
                 write_stream_index        <= (others => '0');
+                write_ignore_drain       <= '0';
+                wr_data_valid_reg         <= '0';
+                wr_data_word_reg          <= (others => '0');
+                wr_data_reload_pending    <= '0';
                 write_reply_pending       <= '0';
                 write_reply_has_data      <= '0';
                 write_reply_data_word     <= (others => '0');
@@ -681,8 +702,10 @@ begin
                 ext_slot_complete_seq_v := ext_slot_complete_seq;
                 rd_cmd_pending_valid_v := rd_cmd_pending_valid;
                 rd_cmd_pending_slot_v  := rd_cmd_pending_slot;
+                rd_cmd_accepted_v      := false;
                 diag_clear_pending_v   := diag_clear_pending;
                 err_count_inc_pending_v := err_count_inc_pending;
+                ext_write_word_v       := wr_data_word_reg;
                 ext_slot_payload_wr_en <= (others => '0');
                 int_slot_payload_wr_en <= (others => '0');
                 allow_ooo_v            := effective_ooo_func(ooo_ctrl_enable);
@@ -702,6 +725,12 @@ begin
                 end if;
                 hub_cap_word_v(3) := '1';
                 hub_gts_counter        <= hub_gts_counter + 1;
+
+                if (wr_data_reload_pending = '1') then
+                    wr_data_word_reg       <= i_wr_data_q;
+                    wr_data_reload_pending <= '0';
+                    ext_write_word_v       := i_wr_data_q;
+                end if;
 
                 if (diag_clear_pending = '1') then
                     hub_err_flags        <= (others => '0');
@@ -751,32 +780,38 @@ begin
                     ext_slot_state(rd_cmd_pending_slot) <= SLOT_WAIT_DATA;
                     ext_slot_state_v(rd_cmd_pending_slot) := SLOT_WAIT_DATA;
                     rd_cmd_pending_valid_v := '0';
+                    rd_cmd_accepted_v      := true;
                 end if;
 
                 if (i_bus_rd_data_valid = '1') then
                     bus_tag_v := to_integer(unsigned(i_bus_rd_data_tag));
-                    if (bus_tag_v < OOO_SLOT_COUNT_G and ext_slot_state(bus_tag_v) = SLOT_WAIT_DATA) then
+                    if (bus_tag_v < OOO_SLOT_COUNT_G and ext_slot_state_v(bus_tag_v) = SLOT_WAIT_DATA) then
                         ext_slot_payload_wr_en(bus_tag_v)   <= '1';
-                        ext_slot_payload_wr_addr(bus_tag_v) <= to_integer(ext_slot_words_received(bus_tag_v)(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0));
+                        ext_slot_payload_wr_addr(bus_tag_v) <= to_integer(ext_slot_words_received_v(bus_tag_v)(PAYLOAD_ADDR_WIDTH_CONST - 1 downto 0));
                         ext_slot_payload_wr_data(bus_tag_v) <= i_bus_rd_data;
+                        if ((ext_slot_pkt_info(bus_tag_v).start_address = x"0012E0") or
+                            (ext_slot_pkt_info(bus_tag_v).start_address = x"001AC0") or
+                            (ext_slot_pkt_info(bus_tag_v).start_address = x"001E20")) then
+                            report "DBG_RD_DATA slot=" & integer'image(bus_tag_v) &
+                                   " addr=0x" & to_hstring(ext_slot_pkt_info(bus_tag_v).start_address) &
+                                   " wr_idx=" & integer'image(to_integer(ext_slot_words_received_v(bus_tag_v))) &
+                                   " data=0x" & to_hstring(i_bus_rd_data);
+                        end if;
                         next_read_addr_v := resize(unsigned(ext_slot_pkt_info(bus_tag_v).start_address(17 downto 0)), 32);
                         if (pkt_is_nonincrementing_func(ext_slot_pkt_info(bus_tag_v)) = false) then
-                            next_read_addr_v := next_read_addr_v + resize(ext_slot_words_received(bus_tag_v), 32);
+                            next_read_addr_v := next_read_addr_v + resize(ext_slot_words_received_v(bus_tag_v), 32);
                         end if;
                         last_ext_read_addr   <= std_logic_vector(next_read_addr_v);
                         last_ext_read_data   <= i_bus_rd_data;
                         ext_word_read_count  <= wrap_inc32_func(ext_word_read_count);
-                        ext_slot_words_received_v(bus_tag_v) := ext_slot_words_received(bus_tag_v) + 1;
+                        ext_slot_words_received_v(bus_tag_v) := ext_slot_words_received_v(bus_tag_v) + 1;
                     end if;
                 end if;
 
                 if (i_bus_rd_done = '1') then
                     bus_tag_v := to_integer(unsigned(i_bus_rd_done_tag));
-                    if (bus_tag_v < OOO_SLOT_COUNT_G and ext_slot_state(bus_tag_v) = SLOT_WAIT_DATA) then
-                        done_words_v := ext_slot_words_received(bus_tag_v);
-                        if (i_bus_rd_data_valid = '1' and i_bus_rd_done_tag = i_bus_rd_data_tag) then
-                            done_words_v := ext_slot_words_received(bus_tag_v) + 1;
-                        end if;
+                    if (bus_tag_v < OOO_SLOT_COUNT_G and ext_slot_state_v(bus_tag_v) = SLOT_WAIT_DATA) then
+                        done_words_v := ext_slot_words_received_v(bus_tag_v);
 
                         ext_slot_words_received_v(bus_tag_v) := done_words_v;
                         ext_slot_response(bus_tag_v)       <= i_bus_rd_response;
@@ -787,17 +822,19 @@ begin
                             hub_err_flags(HUB_ERR_DECERR_CONST) <= '1';
                             err_pulse_v := true;
                         end if;
-                        if (ext_slot_reply_suppress(bus_tag_v) = '1') then
-                            ext_slot_state(bus_tag_v) <= SLOT_FREE;
-                            ext_slot_state_v(bus_tag_v) := SLOT_FREE;
-                            ext_slot_words_received_v(bus_tag_v) := (others => '0');
-                        else
-                            ext_slot_state(bus_tag_v)      <= SLOT_READY;
-                            ext_slot_complete_seq(bus_tag_v) <= complete_seq_counter;
-                            ext_slot_state_v(bus_tag_v)      := SLOT_READY;
-                            ext_slot_complete_seq_v(bus_tag_v) := complete_seq_counter;
-                            complete_seq_counter           <= complete_seq_counter + 1;
+                        if ((ext_slot_pkt_info(bus_tag_v).start_address = x"0012E0") or
+                            (ext_slot_pkt_info(bus_tag_v).start_address = x"001AC0") or
+                            (ext_slot_pkt_info(bus_tag_v).start_address = x"001E20")) then
+                            report "DBG_RD_DONE slot=" & integer'image(bus_tag_v) &
+                                   " addr=0x" & to_hstring(ext_slot_pkt_info(bus_tag_v).start_address) &
+                                   " done_words=" & integer'image(to_integer(done_words_v)) &
+                                   " rsp=" & to_hstring(i_bus_rd_response);
                         end if;
+                        ext_slot_state(bus_tag_v)      <= SLOT_READY;
+                        ext_slot_complete_seq(bus_tag_v) <= complete_seq_counter;
+                        ext_slot_state_v(bus_tag_v)      := SLOT_READY;
+                        ext_slot_complete_seq_v(bus_tag_v) := complete_seq_counter;
+                        complete_seq_counter           <= complete_seq_counter + 1;
                     end if;
                 end if;
 
@@ -807,7 +844,7 @@ begin
 
                     when WR_INT_DRAINING =>
                         if (i_wr_data_empty = '0' and write_drain_remaining > 0) then
-                            if (write_drain_remaining = pkt_length_func(write_pkt_info)) then
+                            if (write_ignore_drain = '0' and write_drain_remaining = pkt_length_func(write_pkt_info)) then
                                 write_response_reg    <= SC_RSP_SLVERR_CONST;
                                 internal_addr_error_v := true;
                             end if;
@@ -820,6 +857,7 @@ begin
                                     write_complete_seq    <= complete_seq_counter;
                                     complete_seq_counter  <= complete_seq_counter + 1;
                                 end if;
+                                write_ignore_drain <= '0';
                                 write_state <= WR_IDLE;
                             end if;
                         end if;
@@ -875,20 +913,34 @@ begin
 
                     when WR_EXT_WAIT_CMD =>
                         if (i_bus_wr_cmd_ready = '1') then
-                            write_state        <= WR_EXT_RUNNING;
-                            write_stream_index <= (others => '0');
+                            write_state            <= WR_EXT_RUNNING;
+                            write_stream_index     <= (others => '0');
+                            wr_data_word_reg       <= i_wr_data_q;
+                            wr_data_valid_reg      <= '1';
+                            wr_data_reload_pending <= '0';
                         end if;
 
                     when WR_EXT_RUNNING =>
-                        if (i_bus_wr_data_ready = '1' and i_wr_data_empty = '0') then
+                        if (wr_data_reload_pending = '1') then
+                            ext_write_word_v := i_wr_data_q;
+                        end if;
+
+                        if (i_bus_wr_data_ready = '1' and wr_data_valid_reg = '1') then
                             last_ext_write_addr  <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(17 downto 0)), 32));
                             if (pkt_is_nonincrementing_func(write_pkt_info) = false) then
                                 last_ext_write_addr <= std_logic_vector(resize(unsigned(write_pkt_info.start_address(17 downto 0)), 32) +
                                                                         resize(write_stream_index, 32));
                             end if;
-                            last_ext_write_data  <= i_wr_data_q;
+                            last_ext_write_data  <= ext_write_word_v;
                             ext_word_write_count <= wrap_inc32_func(ext_word_write_count);
                             write_stream_index   <= write_stream_index + 1;
+                            if (write_stream_index + 1 >= pkt_length_func(write_pkt_info)) then
+                                wr_data_valid_reg      <= '0';
+                                wr_data_reload_pending <= '0';
+                            else
+                                wr_data_valid_reg      <= '1';
+                                wr_data_reload_pending <= '1';
+                            end if;
                         end if;
 
                         if (i_bus_wr_done = '1') then
@@ -906,6 +958,8 @@ begin
                                 write_complete_seq    <= complete_seq_counter;
                                 complete_seq_counter  <= complete_seq_counter + 1;
                             end if;
+                            wr_data_valid_reg      <= '0';
+                            wr_data_reload_pending <= '0';
                             write_state <= WR_IDLE;
                         end if;
 
@@ -1223,6 +1277,15 @@ begin
                     end if;
                 elsif (tx_state = TX_SELECTING) then
                     if (i_tx_reply_ready = '1') then
+                        if (tx_source = TX_SRC_EXT_READ and ((tx_launch_info.start_address = x"0012E0") or
+                            (tx_launch_info.start_address = x"001AC0") or
+                            (tx_launch_info.start_address = x"001E20"))) then
+                            report "DBG_TX_START slot=" & integer'image(tx_slot_index) &
+                                   " addr=0x" & to_hstring(tx_launch_info.start_address) &
+                                   " len=" & integer'image(to_integer(unsigned(tx_launch_info.rw_length))) &
+                                   " ext_words=" & integer'image(to_integer(tx_ext_words_remaining)) &
+                                   " q0=0x" & to_hstring(ext_slot_payload_q(tx_slot_index));
+                        end if;
                         tx_reply_start_pulse <= '1';
                         tx_reply_info_reg     <= tx_launch_info;
                         tx_reply_response_reg <= tx_launch_response;
@@ -1237,7 +1300,7 @@ begin
                                     tx_state <= TX_WAIT_DONE;
                                 end if;
                             when TX_SRC_INT_READ | TX_SRC_EXT_READ =>
-                                if (unsigned(tx_launch_info.rw_length) = 0) then
+                                if (tx_launch_suppress = '1' or unsigned(tx_launch_info.rw_length) = 0) then
                                     tx_state <= TX_WAIT_DONE;
                                 else
                                     tx_state <= TX_PRIMING;
@@ -1255,6 +1318,16 @@ begin
                     tx_state <= TX_STREAMING;
                 elsif (tx_state = TX_STREAMING) then
                     if (i_tx_data_ready = '1') then
+                        if (tx_source = TX_SRC_EXT_READ and ((tx_reply_info_reg.start_address = x"0012E0") or
+                            (tx_reply_info_reg.start_address = x"001AC0") or
+                            (tx_reply_info_reg.start_address = x"001E20"))) then
+                            report "DBG_TX_WORD slot=" & integer'image(tx_slot_index) &
+                                   " addr=0x" & to_hstring(tx_reply_info_reg.start_address) &
+                                   " idx=" & integer'image(to_integer(tx_word_index)) &
+                                   " data=0x" & to_hstring(ext_slot_payload_q(tx_slot_index)) &
+                                   " words_left=" & integer'image(to_integer(tx_words_remaining)) &
+                                   " ext_left=" & integer'image(to_integer(tx_ext_words_remaining));
+                        end if;
                         if (tx_source = TX_SRC_EXT_READ and tx_ext_words_remaining /= 0) then
                             tx_ext_words_remaining <= tx_ext_words_remaining - 1;
                         end if;
@@ -1307,21 +1380,34 @@ begin
                     free_int_slot_v := 0;
 
                     for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
-                        if (have_free_ext_v = false and ext_slot_state(idx) = SLOT_FREE) then
+                        if (have_free_ext_v = false and ext_slot_state_v(idx) = SLOT_FREE) then
                             have_free_ext_v := true;
                             free_ext_slot_v := idx;
                         end if;
                     end loop;
 
                     for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
-                        if (have_free_int_v = false and int_slot_valid(idx) = '0') then
+                        if (have_free_int_v = false and int_slot_valid_v(idx) = '0') then
                             have_free_int_v := true;
                             free_int_slot_v := idx;
                         end if;
                     end loop;
 
                     if (accepted_pkt_ignore_v = true) then
-                        null;
+                        if (read_pkt_v = false and pkt_is_atomic_func(i_pkt_info) = false and pkt_len_v /= 0 and write_state = WR_IDLE and write_reply_pending = '0') then
+                            write_pkt_info        <= accepted_pkt_info_v;
+                            write_reply_info      <= accepted_pkt_info_v;
+                            write_reply_suppress  <= '1';
+                            write_reply_has_data  <= '0';
+                            write_is_internal     <= '0';
+                            write_issue_seq       <= issue_seq_counter;
+                            write_response_reg    <= SC_RSP_OK_CONST;
+                            write_drain_remaining <= pkt_len_v;
+                            write_stream_index    <= (others => '0');
+                            write_ignore_drain    <= '1';
+                            issue_seq_counter     <= issue_seq_counter + 1;
+                            write_state           <= WR_INT_DRAINING;
+                        end if;
                     elsif (read_pkt_v) then
                         if (internal_pkt_v) then
                             if (have_free_int_v and int_fill_active = '0' and (allow_ooo_v or busy_for_order_v = false)) then
@@ -1409,6 +1495,7 @@ begin
                                 ext_slot_issue_seq(free_ext_slot_v)       <= issue_seq_counter;
                                 ext_slot_issue_seq_v(free_ext_slot_v)     := issue_seq_counter;
                                 issue_seq_counter                         <= issue_seq_counter + 1;
+                                ext_slot_words_received_v(free_ext_slot_v) := (others => '0');
 
                                 if (unsupported_feature_v = false) then
                                     ext_pkt_read_count <= wrap_inc32_func(ext_pkt_read_count);
@@ -1433,7 +1520,7 @@ begin
                             end if;
                         end if;
                     else
-                        if (write_state = WR_IDLE) then
+                        if (write_state = WR_IDLE and write_reply_pending = '0') then
                             if (internal_pkt_v) then
                                 if (allow_ooo_v or busy_for_order_v = false) then
                                     write_pkt_info        <= accepted_pkt_info_v;
@@ -1452,6 +1539,7 @@ begin
                                     end if;
                                     issue_seq_counter     <= issue_seq_counter + 1;
                                     write_reply_has_data  <= '0';
+                                    write_ignore_drain    <= '0';
 
                                     if (unsupported_feature_v or pkt_len_v = 0) then
                                         if (pkt_reply_suppressed_func(i_pkt_info) = false) then
@@ -1487,6 +1575,7 @@ begin
                                     end if;
                                     issue_seq_counter     <= issue_seq_counter + 1;
                                     write_reply_has_data  <= '0';
+                                    write_ignore_drain    <= '0';
                                     if (unsupported_feature_v = false) then
                                         ext_pkt_write_count <= wrap_inc32_func(ext_pkt_write_count);
                                         if (pkt_is_atomic_func(i_pkt_info)) then
@@ -1517,7 +1606,8 @@ begin
                 if (
                     write_state /= WR_ATOMIC_RD_WAIT_CMD and
                     rd_cmd_pending_valid_v = '0' and
-                    rd_issue_live = '1'
+                    rd_issue_live = '1' and
+                    rd_cmd_accepted_v = false
                 ) then
                     rd_cmd_pending_valid_v := '1';
                     rd_cmd_pending_slot_v  := rd_issue_slot;
@@ -1595,6 +1685,10 @@ begin
                     write_response_reg        <= SC_RSP_OK_CONST;
                     write_drain_remaining     <= (others => '0');
                     write_stream_index        <= (others => '0');
+                    write_ignore_drain       <= '0';
+                    wr_data_valid_reg         <= '0';
+                    wr_data_word_reg          <= (others => '0');
+                    wr_data_reload_pending    <= '0';
                     write_reply_pending       <= '0';
                     write_reply_has_data      <= '0';
                     write_reply_data_word     <= (others => '0');
@@ -1652,7 +1746,8 @@ begin
                 for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
                     if (
                         ext_slot_state(idx) = SLOT_WAIT_ISSUE and
-                        not (rd_cmd_pending_valid = '1' and idx = rd_cmd_pending_slot)
+                        not (rd_cmd_pending_valid = '1' and idx = rd_cmd_pending_slot) and
+                        not (write_state = WR_ATOMIC_RD_WAIT_DATA and idx = 0)
                     ) then
                         rd_issue_valid_v := true;
                         rd_issue_slot_v  := idx;
@@ -1705,10 +1800,14 @@ begin
                 tx_ooo_int_ready_seq_v   := (others => '0');
                 for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
                     if (int_slot_valid(idx) = '1') then
-                        tx_ooo_int_ready_valid_v := true;
-                        tx_ooo_int_ready_slot_v  := idx;
-                        tx_ooo_int_ready_seq_v   := int_slot_complete_seq(idx);
-                        exit;
+                        if (
+                            tx_ooo_int_ready_valid_v = false or
+                            seq_precedes_func(int_slot_complete_seq(idx), tx_ooo_int_ready_seq_v)
+                        ) then
+                            tx_ooo_int_ready_valid_v := true;
+                            tx_ooo_int_ready_slot_v  := idx;
+                            tx_ooo_int_ready_seq_v   := int_slot_complete_seq(idx);
+                        end if;
                     end if;
                 end loop;
 
@@ -1717,10 +1816,14 @@ begin
                 tx_ooo_ext_ready_seq_v   := (others => '0');
                 for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
                     if (ext_slot_state(idx) = SLOT_READY) then
-                        tx_ooo_ext_ready_valid_v := true;
-                        tx_ooo_ext_ready_slot_v  := idx;
-                        tx_ooo_ext_ready_seq_v   := ext_slot_complete_seq(idx);
-                        exit;
+                        if (
+                            tx_ooo_ext_ready_valid_v = false or
+                            seq_precedes_func(ext_slot_complete_seq(idx), tx_ooo_ext_ready_seq_v)
+                        ) then
+                            tx_ooo_ext_ready_valid_v := true;
+                            tx_ooo_ext_ready_slot_v  := idx;
+                            tx_ooo_ext_ready_seq_v   := ext_slot_complete_seq(idx);
+                        end if;
                     end if;
                 end loop;
 
@@ -1729,10 +1832,14 @@ begin
                 tx_issue_int_ready_seq_v   := (others => '0');
                 for idx in 0 to OUTSTANDING_INT_RESERVED_G - 1 loop
                     if (int_slot_valid(idx) = '1') then
-                        tx_issue_int_ready_valid_v := true;
-                        tx_issue_int_ready_slot_v  := idx;
-                        tx_issue_int_ready_seq_v   := int_slot_issue_seq(idx);
-                        exit;
+                        if (
+                            tx_issue_int_ready_valid_v = false or
+                            seq_precedes_func(int_slot_issue_seq(idx), tx_issue_int_ready_seq_v)
+                        ) then
+                            tx_issue_int_ready_valid_v := true;
+                            tx_issue_int_ready_slot_v  := idx;
+                            tx_issue_int_ready_seq_v   := int_slot_issue_seq(idx);
+                        end if;
                     end if;
                 end loop;
                 tx_issue_ext_ready_valid_v := false;
@@ -1740,10 +1847,14 @@ begin
                 tx_issue_ext_ready_seq_v   := (others => '0');
                 for idx in 0 to OOO_SLOT_COUNT_G - 1 loop
                     if (ext_slot_state(idx) = SLOT_READY) then
-                        tx_issue_ext_ready_valid_v := true;
-                        tx_issue_ext_ready_slot_v  := idx;
-                        tx_issue_ext_ready_seq_v   := ext_slot_issue_seq(idx);
-                        exit;
+                        if (
+                            tx_issue_ext_ready_valid_v = false or
+                            seq_precedes_func(ext_slot_issue_seq(idx), tx_issue_ext_ready_seq_v)
+                        ) then
+                            tx_issue_ext_ready_valid_v := true;
+                            tx_issue_ext_ready_slot_v  := idx;
+                            tx_issue_ext_ready_seq_v   := ext_slot_issue_seq(idx);
+                        end if;
                     end if;
                 end loop;
 

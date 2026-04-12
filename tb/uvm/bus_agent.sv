@@ -14,6 +14,7 @@ class sc_hub_bus_txn extends uvm_sequence_item;
   int unsigned    atomic_id;
   bit             force_ooo;
   bit             is_ooo;
+  sc_pkt_seq_item cmd_meta_h;
 
   function new(string name = "sc_hub_bus_txn");
     super.new(name);
@@ -30,6 +31,7 @@ class sc_hub_bus_txn extends uvm_sequence_item;
     atomic_id    = 0;
     force_ooo    = 1'b0;
     is_ooo       = 1'b0;
+    cmd_meta_h    = null;
   endfunction
 
   function sc_hub_bus_txn clone_item(string name = "sc_hub_bus_txn_clone");
@@ -48,6 +50,9 @@ class sc_hub_bus_txn extends uvm_sequence_item;
     clone_h.atomic_id    = atomic_id;
     clone_h.force_ooo    = force_ooo;
     clone_h.is_ooo       = is_ooo;
+    if (cmd_meta_h != null) begin
+      clone_h.cmd_meta_h = cmd_meta_h.clone_item({name, "_cmd_meta"});
+    end
     return clone_h;
   endfunction
 endclass
@@ -114,16 +119,51 @@ class bus_slave_monitor_uvm extends uvm_monitor;
     end
   endfunction
 
+  function void enqueue_bus_inject(sc_pkt_seq_item pending_cmd_h);
+    if (pending_cmd_h == null || (pending_cmd_h.forced_response == 2'b00)) begin
+      return;
+    end
+
+    case (cfg.bus_type)
+      SC_HUB_BUS_AXI4: begin
+        if (axi4_vif != null) begin
+          axi4_vif.enqueue_cmd_inject(
+            pending_cmd_h.is_write(),
+            pending_cmd_h.start_address[17:0],
+            pending_cmd_h.rw_length,
+            pending_cmd_h.forced_response
+          );
+        end
+      end
+      default: begin
+        if (avmm_vif != null) begin
+          avmm_vif.enqueue_cmd_inject(
+            pending_cmd_h.is_write(),
+            pending_cmd_h.start_address[17:0],
+            pending_cmd_h.rw_length,
+            pending_cmd_h.forced_response
+          );
+        end
+      end
+    endcase
+  endfunction
+
   function void write_cmd(sc_pkt_seq_item req_h);
     sc_pkt_seq_item pending_cmd_h;
     sc_pkt_seq_item atomic_wr_cmd_h;
     int unsigned    avmm_bus_txn_count;
+    sc_cmd_t        cmd;
 
     if (req_h == null) begin
       return;
     end
 
     if (req_h.malformed || sc_hub_ref_model_pkg::is_internal_csr_addr(req_h.start_address[17:0])) begin
+      return;
+    end
+
+    cmd = req_h.to_cmd();
+    if (sc_hub_sim_pkg::cmd_ignored_for_feb(cmd, sc_hub_sim_pkg::FEB_TYPE_ALL)) begin
       return;
     end
 
@@ -140,6 +180,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
         pending_cmd_h.rw_length = 1;
       end
       enqueue_pending_cmd(pending_cmd_h);
+      enqueue_bus_inject(pending_cmd_h);
     end
 
     if (req_h.has_atomic_meta()) begin
@@ -147,6 +188,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       atomic_wr_cmd_h.sc_type = SC_WRITE;
       atomic_wr_cmd_h.rw_length = 1;
       enqueue_pending_cmd(atomic_wr_cmd_h);
+      enqueue_bus_inject(atomic_wr_cmd_h);
     end
   endfunction
 
@@ -224,6 +266,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = matched_cmd_h.atomic_id;
       bus_h.force_ooo    = matched_cmd_h.force_ooo;
       bus_h.is_ooo       = matched_cmd_h.force_ooo || out_of_order;
+      bus_h.cmd_meta_h    = matched_cmd_h.clone_item("cmd_meta_h");
     end else begin
       bus_h.has_cmd_meta = 1'b0;
       bus_h.ordered      = 1'b0;
@@ -234,6 +277,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = 0;
       bus_h.force_ooo    = 1'b0;
       bus_h.is_ooo       = 1'b0;
+      bus_h.cmd_meta_h    = null;
       if (!has_match) begin
         `uvm_warning(get_type_name(), "AXI4 read txn had no matching pending command metadata")
       end
@@ -265,6 +309,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = matched_cmd_h.atomic_id;
       bus_h.force_ooo    = matched_cmd_h.force_ooo;
       bus_h.is_ooo       = matched_cmd_h.force_ooo || out_of_order;
+      bus_h.cmd_meta_h    = matched_cmd_h.clone_item("cmd_meta_h");
     end else begin
       bus_h.has_cmd_meta = 1'b0;
       bus_h.ordered      = 1'b0;
@@ -275,6 +320,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = 0;
       bus_h.force_ooo    = 1'b0;
       bus_h.is_ooo       = 1'b0;
+      bus_h.cmd_meta_h    = null;
       if (!has_match) begin
         `uvm_warning(get_type_name(), "AXI4 write txn had no matching pending command metadata")
       end
@@ -306,6 +352,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = matched_cmd_h.atomic_id;
       bus_h.force_ooo    = matched_cmd_h.force_ooo;
       bus_h.is_ooo       = matched_cmd_h.force_ooo || out_of_order;
+      bus_h.cmd_meta_h    = matched_cmd_h.clone_item("cmd_meta_h");
     end else begin
       bus_h.has_cmd_meta = 1'b0;
       bus_h.ordered      = 1'b0;
@@ -316,12 +363,21 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = 0;
       bus_h.force_ooo    = 1'b0;
       bus_h.is_ooo       = 1'b0;
+      bus_h.cmd_meta_h    = null;
       if (!has_match) begin
         `uvm_warning(get_type_name(), "AVMM read txn had no matching pending command metadata")
       end
     end
 
     bus_ap.write(bus_h);
+    if ($test$plusargs("SC_HUB_TRACE_BUS")) begin
+      `uvm_info(get_type_name(),
+                $sformatf("TRACE_BUS kind=AVMM_RD addr=0x%05h burst=%0d has_meta=%0b ordered=%0b mode=%0d dom=%0d epoch=%0d atomic_mode=%0d atomic_id=%0d ooo=%0b",
+                          bus_h.address, bus_h.burst_length, bus_h.has_cmd_meta, bus_h.ordered,
+                          bus_h.order_mode, bus_h.order_domain, bus_h.order_epoch,
+                          bus_h.atomic_mode, bus_h.atomic_id, bus_h.is_ooo),
+                UVM_LOW);
+    end
   endtask
 
   task sample_avmm_write();
@@ -347,6 +403,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = matched_cmd_h.atomic_id;
       bus_h.force_ooo    = matched_cmd_h.force_ooo;
       bus_h.is_ooo       = matched_cmd_h.force_ooo || out_of_order;
+      bus_h.cmd_meta_h    = matched_cmd_h.clone_item("cmd_meta_h");
     end else begin
       bus_h.has_cmd_meta = 1'b0;
       bus_h.ordered      = 1'b0;
@@ -357,6 +414,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
       bus_h.atomic_id    = 0;
       bus_h.force_ooo    = 1'b0;
       bus_h.is_ooo       = 1'b0;
+      bus_h.cmd_meta_h    = null;
       if (!has_match) begin
         `uvm_warning(get_type_name(),
                      $sformatf("AVMM write txn had no matching pending command metadata addr=0x%04h burst=%0d pending_depth=%0d",
@@ -367,6 +425,14 @@ class bus_slave_monitor_uvm extends uvm_monitor;
     end
 
     bus_ap.write(bus_h);
+    if ($test$plusargs("SC_HUB_TRACE_BUS")) begin
+      `uvm_info(get_type_name(),
+                $sformatf("TRACE_BUS kind=AVMM_WR addr=0x%05h burst=%0d has_meta=%0b ordered=%0b mode=%0d dom=%0d epoch=%0d atomic_mode=%0d atomic_id=%0d ooo=%0b",
+                          bus_h.address, bus_h.burst_length, bus_h.has_cmd_meta, bus_h.ordered,
+                          bus_h.order_mode, bus_h.order_domain, bus_h.order_epoch,
+                          bus_h.atomic_mode, bus_h.atomic_id, bus_h.is_ooo),
+                UVM_LOW);
+    end
   endtask
 
   task run_phase(uvm_phase phase);
@@ -378,6 +444,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
         @(posedge axi4_vif.clk);
         if (axi4_vif.rst) begin
           pending_cmd_q.delete();
+          axi4_vif.clear_cmd_injects();
           continue;
         end
 
@@ -395,6 +462,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
         if (avmm_vif.rst) begin
           pending_cmd_q.delete();
           avmm_wr_beats_remaining = 0;
+          avmm_vif.clear_cmd_injects();
           continue;
         end
 
