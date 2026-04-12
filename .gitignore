@@ -13,3 +13,6 @@ syn/quartus/*.qws
 syn/quartus/a5_pin_model_dump.txt
 tb/sim_runs/
 tb/work*/
+transcript
+__pycache__/
+*.pyc

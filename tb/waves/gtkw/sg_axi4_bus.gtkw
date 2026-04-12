@@ -1,0 +1,28 @@
+[*] GTKWave Analyzer save file
+[dumpfile] REPLACE_WITH_VCD
+@200
+- axi4 bus
+@22
+tb_top.harness.axi4_vif.araddr
+[color] 0
+@28
+tb_top.harness.axi4_vif.arvalid
+[color] 3
+@28
+tb_top.harness.axi4_vif.arready
+[color] 3
+@22
+tb_top.harness.axi4_vif.rdata
+[color] 5
+@28
+tb_top.harness.axi4_vif.rvalid
+[color] 3
+@28
+tb_top.harness.axi4_vif.rready
+[color] 3
+@22
+tb_top.harness.axi4_vif.awaddr
+[color] 0
+@22
+tb_top.harness.axi4_vif.wdata
+[color] 5

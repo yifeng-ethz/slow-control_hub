@@ -1,8 +1,9 @@
 # SC_HUB v2 DV — Error Handling Cases
 
 **Parent:** [DV_PLAN.md](DV_PLAN.md)
-**ID Range:** T500-T549
-**Total:** 50 cases
+**Canonical ID Range:** X001-X128
+**Current Implementation Aliases:** T500-T549 (implemented subset)
+**Total:** 128 cases
 **Method:** All directed (D)
 
 Error handling is the most critical part of the verification: the hub runs on a particle physics detector frontend where errors happen in production and recovery must be autonomous. This document organizes errors into three severity tiers:
@@ -196,3 +197,118 @@ HUB_CAP (offset TBD, read-only):
 ```
 
 Software reads HUB_CAP at init and asserts that required features are present before using ordering, atomic, or large burst operations. This converts fatal silent failures into loud software errors at startup.
+
+
+---
+
+## 5. Planned Expansion Cases (X051-X128)
+
+The cases below are part of the canonical `DV_ERROR` plan but remain **planned-only** today. They target failure signatures that are easy to miss when the regression only validates the obvious malformed-packet and timeout paths.
+
+### 5.1 Parser, Framing, and Contract Hardening -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X051 | AVMM | Read packet with illegal type bits but legal trailer | Malformed command that still looks well framed | Distinguishes parser reject from generic framing reject. |
+| X052 | AVMM | Write packet with mismatched MSTR/FEB type | Command should not target this FEB | Needed once detector-type masking is part of the contract. |
+| X053 | AVMM | Packet with reserved order encoding plus atomic bit | Illegal mixed contract fields | Looks for undefined-field priority bugs. |
+| X054 | AVMM | Nonincrement packet to unsupported config | Fixed-address command when feature disabled | Should fail loudly, not act incrementing silently. |
+| X055 | AVMM | Length header says 256, trailer arrives after 255 | Off-by-one short payload | Common parser fencepost failure. |
+| X056 | AVMM | Length header says 255, 256 payload words arrive | Off-by-one long payload | Companion to X055. |
+| X057 | AVMM | Duplicate trailer after valid packet | Extra K28.4 word | Parser must resync cleanly instead of misclassifying next packet. |
+| X058 | AVMM | Preamble appears inside payload without datak qualification | Payload resembles control word | Ensures control detection honors K-character contract. |
+| X059 | AVMM | Reserved response code from downstream injection | Force unsupported reply meta bits | Host-visible error encoding path must stay defined. |
+| X060 | AVMM | Unsupported atomic opcode variant | Reserved atomic modifier bits | Better to reject deterministically than partially execute. |
+| X061 | AVMM | Reserved capability bit queried by software | Read future-use bits | Observability contract should remain stable under unknown fields. |
+| X062 | AVMM | Mixed legal/illegal packets in same bursty stream | One malformed out of N legal packets | Detects parser state contamination across packets. |
+| X063 | AVMM | Malformed packet immediately after soft reset | First packet after reset is bad | Recovery logic often assumes first packet is clean. |
+
+### 5.2 Bus Fault Matrix Expansion -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X064 | AVMM | Decode error on first beat of max read | Unmapped `L=256` read | Large-burst decode error path should not assume `L=1`. |
+| X065 | AVMM | Decode error on write after payload fully buffered | Unmapped long write | Makes sure store-and-forward rollback/reporting is correct. |
+| X066 | AVMM | Alternating decode and slave errors | Inject patterned bus errors | Error flags/counters must classify, not just count. |
+| X067 | AVMM | Read timeout followed by decode error | Different failure classes back-to-back | Finds stale error state leakage. |
+| X068 | AVMM | Write timeout followed by successful read | Recovery after different fault classes | Same motivation on write side. |
+| X069 | AXI4 | BRESP `SLVERR` on final beat | Long write with terminal bus fault | AXI write error timing differs from AVMM. |
+| X070 | AXI4 | RRESP error on middle beat | Long read with partial-burst error | Defines whether partial payload is preserved or poisoned. |
+| X071 | AXI4 | Split error classes across reordered responses | One RID okay, one RID error | Reorder logic must preserve fault attribution. |
+| X072 | AXI4 | Stalled `BVALID` after all W beats accepted | Write response channel fault | Another path to scoreboard wedges. |
+| X073 | AXI4 | Stalled `RVALID` mid-burst then timeout | Partial read timeout on AXI4 | Mirrors T519 for AXI4 semantics. |
+| X074 | AVMM | Bus returns X data with valid handshake | Corrupt-but-accepted read data | Scoreboard and assertions should catch X-propagation. |
+| X075 | AVMM | Spurious readdatavalid without prior read | BFM protocol violation | Hardening against illegal slave behavior. |
+| X076 | AXI4 | Spurious response ID not in flight | Rogue RID/BID | Important once OoO path is considered robust. |
+
+### 5.3 Resource Accounting and Leak Sentinels -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X077 | AVMM | Payload leak after malformed write under near-full state | Combine parser drop with high occupancy | This is the practical leak corner, not the easy empty case. |
+| X078 | AVMM | Header leak after decode error storm | Many failing short reads | Ensures error-heavy traffic still frees metadata. |
+| X079 | AVMM | Credit leak after timeout then reset | Timeout, then soft reset, then read counters | Counter/resource reconciliation after reset matters. |
+| X080 | AXI4 | Reorder slot leak after mixed RID errors | OoO plus errors | Specific to scoreboard/free path. |
+| X081 | AXI4 | Reorder slot leak after reset mid-completion | Reset with responses in flight | Another frequent leak source. |
+| X082 | AVMM | Counter saturation under continuous drops | Drive drop counters near max | Saturation behavior should be explicit, not accidental wrap. |
+| X083 | AVMM | Counter saturation under continuous bus faults | Same for bus error counters | Companion to X082. |
+| X084 | AVMM | Sticky flag clear race with new error | Clear W1C bit on same cycle as new fault | Classic CSR corner. |
+| X085 | AVMM | Free-count mismatch detector under injected model bug | Intentionally perturb BFM model to stress assertions | Good proving ground for invariant monitors. |
+| X086 | AVMM | Upload-credit mismatch after partial reply abort | Abort reply mid-stream then recover | Upload path accounting is often less exercised. |
+| X087 | AVMM | Download occupancy mismatch after parser resync | Malformed packet then immediate good packet | Looks for stale occupancy on recovery. |
+| X088 | AXI4 | RID scoreboard occupancy mismatch under timeout | Timeout plus OoO | Error-specific version of ordinary fairness tests. |
+| X089 | AVMM | Long-run leak monitor with periodic snapshots | Coverage-oriented error soak | Needed to convert “seems fine” into measured no-leak evidence. |
+
+### 5.4 Reset and Recovery Under Fault Pressure -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X090 | AVMM | Soft reset while drop counter increments | Reset on malformed-packet boundary | Reset/error simultaneity is a real hardware event. |
+| X091 | AVMM | Soft reset while timeout flag asserts | Reset on the exact timeout cycle | Off-by-one recovery bug hotspot. |
+| X092 | AVMM | Double soft reset pulses with no traffic | Two resets separated by 1 cycle | Proves reset path is idempotent. |
+| X093 | AVMM | Double soft reset pulses with active traffic | Same as X092 under load | More realistic than idle reset-only checks. |
+| X094 | AVMM | Hardware reset after soft-reset recovery | Layered recovery paths back-to-back | Verifies no hidden latch-up in reset trees. |
+| X095 | AXI4 | Reset while B channel carries error response | AXI-specific recovery edge | Mirrors read-side cases on write response path. |
+| X096 | AXI4 | Reset while R channel carries error response | Error plus reset and OoO | Needed once AXI path is signed off. |
+| X097 | AVMM | Recovery packet immediately after malformed burst storm | 100 drops then one good command | Stronger version of existing short recovery cases. |
+| X098 | AVMM | Recovery packet immediately after decode-error storm | 100 decode faults then good command | Fault recovery should not be class-specific. |
+| X099 | AVMM | Recovery packet immediately after counter clear sequence | W1C cleanup then valid command | Tooling scripts often do this in practice. |
+| X100 | AVMM | Reset while internal CSR access is the only traffic | Pure internal-path recovery | Keeps internal path from being assumed trivial. |
+| X101 | AVMM | Reset while nonincrement command is active | Feature-specific reset edge | Necessary now that nonincrement is part of the protocol. |
+| X102 | AVMM | Reset while masked-detector packet is ignored | Ignore path plus reset | Finds stale parser state when packet is intentionally dropped by mask. |
+
+### 5.5 Capability and Software-Contract Mismatch Defenses -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X103 | AVMM | Software uses 16-bit address assumption on 24-bit command | Host truncates top address bits | This mismatch already exists in software notes; regression should reflect it. |
+| X104 | AVMM | Software requests burst length 255 cap when hardware allows 256 | Host policy mismatch | Ensures host limitations do not masquerade as hub limits. |
+| X105 | AVMM | Software interprets write ack as payload-bearing | Legacy parser contract | Prevents reintroduction of already-seen host bug. |
+| X106 | AVMM | Software assumes bit16-only response semantics | Legacy response-code parse | Another known host mismatch. |
+| X107 | AVMM | Software sends raw MSTR mask overlay incompatible with v2 fields | Host-side field aliasing bug | Should be detectable, not silently misroute. |
+| X108 | AVMM | Software sends unsupported FEB type mask | No matching detector type | Hardware should ignore or error deterministically. |
+| X109 | AVMM | Software sends nonincrement to hub that advertises no support | Capability mismatch | Host contract must check capability before use. |
+| X110 | AVMM | Software ignores capability bits and sends atomic anyway | Capability mismatch | Same for atomics. |
+| X111 | AVMM | Software ignores capability bits and sends ordering anyway | Capability mismatch | Same for ordering. |
+| X112 | AVMM | Software assumes every write produces upload payload | Legacy host assumption | Explicitly encode no-payload write-ack contract. |
+| X113 | AVMM | Software retries forever on backpressure without observing counters | Host retry storm | Helps evaluate observability needed for debugging. |
+| X114 | AVMM | Software clears counters mid-transaction | Host debug misuse | Useful to define whether counters are monotonic/diagnostic only. |
+| X115 | AVMM | Software polls wrong CSR alias after version bump | Version skew | Needed once packaging/versioning is part of the signoff story. |
+
+### 5.6 Diagnostic Integrity and Observability Failures -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| X116 | AVMM | LAST_WR_* CSR stale after failed write | Faulting write should not overwrite last-good diagnostics | Observability can mislead debug if this is wrong. |
+| X117 | AVMM | LAST_RD_* CSR stale after failed read | Same for read path | Companion case. |
+| X118 | AVMM | Counter snapshot while traffic still active | Read diagnostic CSRs mid-stream | Defines whether software may trust live snapshots. |
+| X119 | AVMM | Counter snapshot immediately after soft reset | Read diagnostics right after reset | Reset-value observability matters for tooling. |
+| X120 | AVMM | HUB_CAP read during heavy load | Capability CSR under pressure | Internal-path observability should stay reliable. |
+| X121 | AVMM | VERSION/META read after error storm | Identity CSRs after faults | Debug scripts typically do this first. |
+| X122 | AXI4 | OoO debug counters after mixed error run | AXI-specific observability | Without this, AXI debug remains anecdotal. |
+| X123 | AVMM | Diagnostic counters under masked-packet traffic | Ignored traffic should not pollute real counters | Important once detector masks are supported. |
+| X124 | AVMM | Diagnostic counters under nonincrement traffic | Fixed-address commands | Ensures new feature traffic is visible in the right buckets. |
+| X125 | AVMM | Diagnostic counters under barrier-only traffic | `L=0` acquire/release | Another easy place for counters to look dead or misleading. |
+| X126 | AVMM | Diagnostic counters near saturation | Read while approaching max | Detects read-side truncation or formatting bugs. |
+| X127 | AVMM | Diagnostic CSRs during partial-reply abort | Read status after truncated upload | Needed for real hardware postmortem workflows. |
+| X128 | AVMM | Full observability audit after mixed-fault campaign | One case that compares raw events vs all counters/last-* CSRs | Final planned diagnostic signoff case. |

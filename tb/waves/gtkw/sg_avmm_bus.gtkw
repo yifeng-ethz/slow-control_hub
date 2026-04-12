@@ -1,0 +1,22 @@
+[*] GTKWave Analyzer save file
+[dumpfile] REPLACE_WITH_VCD
+@200
+- avalon-mm bus
+@22
+tb_top.harness.avmm_vif.address
+[color] 0
+@28
+tb_top.harness.avmm_vif.read
+[color] 3
+@28
+tb_top.harness.avmm_vif.write
+[color] 3
+@22
+tb_top.harness.avmm_vif.writedata
+[color] 5
+@22
+tb_top.harness.avmm_vif.readdata
+[color] 5
+@28
+tb_top.harness.avmm_vif.waitrequest
+[color] 1

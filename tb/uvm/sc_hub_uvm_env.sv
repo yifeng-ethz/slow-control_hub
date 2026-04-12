@@ -36,6 +36,8 @@ class sc_hub_uvm_env extends uvm_env;
     pkt_agent_h.monitor_h.reply_ap.connect(coverage_h.rsp_imp);
     pkt_agent_h.driver_h.sent_ap.connect(ord_checker_h.cmd_imp);
     pkt_agent_h.driver_h.sent_ap.connect(bus_agent_h.monitor_h.cmd_ap);
+    bus_agent_h.monitor_h.bus_ap.connect(scoreboard_h.bus_imp);
     bus_agent_h.monitor_h.bus_ap.connect(ord_checker_h.bus_imp);
+    bus_agent_h.monitor_h.bus_ap.connect(coverage_h.bus_imp);
   endfunction
 endclass

@@ -4,3 +4,6 @@ transcript
 tr_db.log
 work_sc_hub_tb/
 work_sc_hub_tb.stale.*/
+work_*/
+*.vcd
+__pycache__/
