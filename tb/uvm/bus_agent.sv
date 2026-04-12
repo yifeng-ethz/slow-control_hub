@@ -163,7 +163,7 @@ class bus_slave_monitor_uvm extends uvm_monitor;
     end
 
     cmd = req_h.to_cmd();
-    if (sc_hub_sim_pkg::cmd_ignored_for_feb(cmd, sc_hub_sim_pkg::FEB_TYPE_ALL)) begin
+    if (sc_hub_sim_pkg::cmd_ignored_for_feb(cmd, cfg.local_feb_type)) begin
       return;
     end
 

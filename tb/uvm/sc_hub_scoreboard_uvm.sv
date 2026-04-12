@@ -41,19 +41,36 @@ class sc_hub_scoreboard_uvm extends uvm_component;
         mem_model[idx] = base_word + idx;
       end
     end
+    mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0002] = 32'h0000_0001;
+    mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0009] = 32'h0000_0002;
   endfunction
 
   function automatic logic [31:0] predict_read_word(input logic [17:0] word_addr);
     logic [1:0] feb_type;
+    logic [1:0] meta_page_sel;
+    logic       hub_enable;
+    logic       upload_store_forward;
+    logic       ooo_ctrl_enable;
+    logic [31:0] scratch_word;
 
     if (sc_hub_ref_model_pkg::is_internal_csr_addr(word_addr)) begin
-      feb_type = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h001C][1:0];
+      meta_page_sel        = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0001][1:0];
+      hub_enable           = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0002][0];
+      scratch_word         = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0006];
+      upload_store_forward = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0009][1];
+      ooo_ctrl_enable      = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h0018][0];
+      feb_type             = mem_model[sc_hub_ref_model_pkg::HUB_CSR_BASE_ADDR_CONST + 16'h001C][1:0];
       return sc_hub_ref_model_pkg::predict_csr_read_word(
         word_addr,
         cfg.supports_ooo,
         cfg.supports_ordering,
         cfg.supports_atomic,
-        feb_type
+        feb_type,
+        meta_page_sel,
+        hub_enable,
+        scratch_word,
+        upload_store_forward,
+        ooo_ctrl_enable
       );
     end
     return mem_model[word_addr];
@@ -371,16 +388,23 @@ class sc_hub_scoreboard_uvm extends uvm_component;
 
   function void write_cmd(sc_pkt_seq_item cmd_item);
     sc_pkt_seq_item queued_cmd_h;
+    sc_cmd_t        cmd;
 
     if (cmd_item == null) begin
       return;
     end
-
-    if (cmd_item.reply_expected()) begin
-      queued_cmd_h = cmd_item.clone_item({cmd_item.get_name(), "_expected"});
-      expected_q.push_back(queued_cmd_h);
-      expected_rsp_q.push_back(null);
+    if (!cmd_item.expect_reply) begin
+      return;
     end
+
+    cmd = cmd_item.to_cmd();
+    if (sc_hub_sim_pkg::reply_suppressed(cmd, cfg.local_feb_type)) begin
+      return;
+    end
+
+    queued_cmd_h = cmd_item.clone_item({cmd_item.get_name(), "_expected"});
+    expected_q.push_back(queued_cmd_h);
+    expected_rsp_q.push_back(null);
   endfunction
 
   function void write_bus(sc_hub_bus_txn bus_item);
