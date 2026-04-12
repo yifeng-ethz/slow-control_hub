@@ -31,6 +31,13 @@ class sc_hub_cov_collector extends uvm_component;
   localparam int unsigned OOO_ON_INORDER  = 1;
   localparam int unsigned OOO_ON_REORDER  = 2;
 
+  localparam logic [23:0] HUB_CAP_ADDR =
+      sc_hub_addr_map_pkg::INTERNAL_CSR_BASE_CONST + 24'h00001F;
+
+  localparam int unsigned CAP_MATCH_UNOBSERVED = 0;
+  localparam int unsigned CAP_MATCH_OK         = 1;
+  localparam int unsigned CAP_MATCH_MISMATCH   = 2;
+
   uvm_analysis_imp_cov_cmd #(sc_pkt_seq_item, sc_hub_cov_collector) cmd_imp;
   uvm_analysis_imp_cov_rsp #(sc_reply_item, sc_hub_cov_collector)   rsp_imp;
   uvm_analysis_imp_bus     #(sc_hub_bus_txn, sc_hub_cov_collector)  bus_imp;
@@ -43,6 +50,9 @@ class sc_hub_cov_collector extends uvm_component;
   int unsigned rsp_ok_count;
   int unsigned rsp_err_count;
   int unsigned bus_count;
+  int unsigned hub_cap_read_count;
+  int unsigned hub_cap_match_count;
+  int unsigned hub_cap_mismatch_count;
 
   bit          prev_cmd_valid;
   bit          prev_cmd_is_write;
@@ -258,6 +268,32 @@ class sc_hub_cov_collector extends uvm_component;
     x_addr_dir: cross cp_addr_range, cp_dir;
   endgroup
 
+  covergroup hub_cap_cg with function sample(bit          ooo_bit,
+                                             bit          ord_bit,
+                                             bit          atomic_bit,
+                                             bit          present_bit,
+                                             int unsigned match_state,
+                                             int unsigned bus_type);
+    option.per_instance = 1;
+
+    cp_ooo:     coverpoint ooo_bit     { bins off = {0}; bins on = {1}; }
+    cp_ord:     coverpoint ord_bit     { bins off = {0}; bins on = {1}; }
+    cp_atomic:  coverpoint atomic_bit  { bins off = {0}; bins on = {1}; }
+    cp_present: coverpoint present_bit { bins on  = {1}; }
+
+    cp_match: coverpoint match_state {
+      bins matched   = {CAP_MATCH_OK};
+      bins mismatched = {CAP_MATCH_MISMATCH};
+    }
+
+    cp_bus_type: coverpoint bus_type {
+      bins avalon = {SC_HUB_BUS_AVALON};
+      bins axi4   = {SC_HUB_BUS_AXI4};
+    }
+
+    x_feature_match: cross cp_ooo, cp_ord, cp_atomic, cp_match;
+  endgroup
+
   function new(string name = "sc_hub_cov_collector", uvm_component parent = null);
     super.new(name, parent);
     cmd_imp = new("cmd_imp", this);
@@ -266,6 +302,7 @@ class sc_hub_cov_collector extends uvm_component;
     cmd_cg = new();
     rsp_cg = new();
     bus_cg = new();
+    hub_cap_cg = new();
   endfunction
 
   function void build_phase(uvm_phase phase);
@@ -283,6 +320,9 @@ class sc_hub_cov_collector extends uvm_component;
     prev_cmd_is_write = 1'b0;
     prev_cmd_is_internal = 1'b0;
     prev_cmd_time_ns = 0.0;
+    hub_cap_read_count     = 0;
+    hub_cap_match_count    = 0;
+    hub_cap_mismatch_count = 0;
   endfunction
 
   function automatic sc_addr_region_e calc_addr_region(input logic [23:0] start_address);
@@ -443,6 +483,48 @@ class sc_hub_cov_collector extends uvm_component;
                   write_reply,
                   calc_addr_region(rsp_item.start_address),
                   cfg.bus_type);
+
+    if ((rsp_item.start_address == HUB_CAP_ADDR) &&
+        (rsp_item.response == 2'b00) &&
+        (rsp_item.payload_q.size() > 0)) begin
+      sample_hub_cap_reply(rsp_item.payload_q[0]);
+    end
+  endfunction
+
+  function void sample_hub_cap_reply(input logic [31:0] cap_word);
+    bit          ooo_bit;
+    bit          ord_bit;
+    bit          atomic_bit;
+    bit          present_bit;
+    bit          match_ok;
+    int unsigned match_state;
+
+    hub_cap_read_count++;
+
+    ooo_bit     = cap_word[0];
+    ord_bit     = cap_word[1];
+    atomic_bit  = cap_word[2];
+    present_bit = cap_word[3];
+
+    match_ok = (ooo_bit    == cfg.supports_ooo)      &&
+               (ord_bit    == cfg.supports_ordering) &&
+               (atomic_bit == cfg.supports_atomic)   &&
+               (present_bit == 1'b1);
+
+    if (match_ok) begin
+      hub_cap_match_count++;
+      match_state = CAP_MATCH_OK;
+    end else begin
+      hub_cap_mismatch_count++;
+      match_state = CAP_MATCH_MISMATCH;
+      `uvm_error(get_type_name(),
+                 $sformatf("HUB_CAP mismatch: word=0x%08h ooo=%0b ord=%0b atomic=%0b present=%0b (cfg supports ooo=%0b ord=%0b atomic=%0b)",
+                           cap_word, ooo_bit, ord_bit, atomic_bit, present_bit,
+                           cfg.supports_ooo, cfg.supports_ordering, cfg.supports_atomic))
+    end
+
+    hub_cap_cg.sample(ooo_bit, ord_bit, atomic_bit, present_bit,
+                      match_state, cfg.bus_type);
   endfunction
 
   function void write_bus(sc_hub_bus_txn bus_item);
@@ -459,9 +541,11 @@ class sc_hub_cov_collector extends uvm_component;
   function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info(get_type_name(),
-              $sformatf("cmd_count=%0d read_count=%0d write_count=%0d rsp_ok=%0d rsp_err=%0d bus_count=%0d cmd_cov=%0.2f rsp_cov=%0.2f bus_cov=%0.2f",
+              $sformatf("cmd_count=%0d read_count=%0d write_count=%0d rsp_ok=%0d rsp_err=%0d bus_count=%0d cmd_cov=%0.2f rsp_cov=%0.2f bus_cov=%0.2f hub_cap_reads=%0d hub_cap_match=%0d hub_cap_mismatch=%0d hub_cap_cov=%0.2f",
                         cmd_count, read_count, write_count, rsp_ok_count, rsp_err_count,
-                        bus_count, cmd_cg.get_coverage(), rsp_cg.get_coverage(), bus_cg.get_coverage()),
+                        bus_count, cmd_cg.get_coverage(), rsp_cg.get_coverage(), bus_cg.get_coverage(),
+                        hub_cap_read_count, hub_cap_match_count, hub_cap_mismatch_count,
+                        hub_cap_cg.get_coverage()),
               UVM_LOW)
   endfunction
 endclass
