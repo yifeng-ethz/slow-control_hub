@@ -207,7 +207,11 @@ class sc_hub_scoreboard_uvm extends uvm_component;
     return 1'b1;
   endfunction
 
-  function void compare_reply(sc_reply_item expected_h, sc_reply_item actual_h);
+  function void compare_reply(
+    sc_reply_item expected_h,
+    sc_reply_item actual_h,
+    bit           skip_data = 1'b0
+  );
     checks_run++;
 
     if (actual_h.header_valid !== expected_h.header_valid) begin
@@ -240,14 +244,16 @@ class sc_hub_scoreboard_uvm extends uvm_component;
                  $sformatf("Payload length mismatch exp=%0d act=%0d", expected_h.payload_q.size(), actual_h.payload_q.size()))
     end
 
-    for (int unsigned idx = 0;
-         idx < actual_h.payload_q.size() && idx < expected_h.payload_q.size();
-         idx++) begin
-      if (actual_h.payload_q[idx] !== expected_h.payload_q[idx]) begin
-        checks_failed++;
-        `uvm_error(get_type_name(),
-                   $sformatf("Payload word[%0d] mismatch exp=0x%08h act=0x%08h",
-                             idx, expected_h.payload_q[idx], actual_h.payload_q[idx]))
+    if (!skip_data) begin
+      for (int unsigned idx = 0;
+           idx < actual_h.payload_q.size() && idx < expected_h.payload_q.size();
+           idx++) begin
+        if (actual_h.payload_q[idx] !== expected_h.payload_q[idx]) begin
+          checks_failed++;
+          `uvm_error(get_type_name(),
+                     $sformatf("Payload word[%0d] mismatch exp=0x%08h act=0x%08h",
+                               idx, expected_h.payload_q[idx], actual_h.payload_q[idx]))
+        end
       end
     end
   endfunction
@@ -313,6 +319,7 @@ class sc_hub_scoreboard_uvm extends uvm_component;
     if (lhs == null || rhs == null) begin
       return 1'b0;
     end
+    // skip_payload_check is a scoreboard-local compare knob, not protocol state.
     if (lhs.sc_type != rhs.sc_type) begin
       return 1'b0;
     end
@@ -442,6 +449,7 @@ class sc_hub_scoreboard_uvm extends uvm_component;
     sc_pkt_seq_item matched_cmd_h;
     int             expected_idx;
     int             same_addr_idx;
+    bit             skip_data;
 
     if (expected_q.size() == 0 || expected_rsp_q.size() == 0) begin
       checks_failed++;
@@ -491,7 +499,8 @@ class sc_hub_scoreboard_uvm extends uvm_component;
       expected_h = build_expected_reply(matched_cmd_h);
     end
 
-    compare_reply(expected_h, rsp_item);
+    skip_data = (matched_cmd_h != null) ? matched_cmd_h.skip_payload_check : 1'b0;
+    compare_reply(expected_h, rsp_item, skip_data);
     apply_completed_cmd(matched_cmd_h, rsp_item.response);
   endfunction
 
