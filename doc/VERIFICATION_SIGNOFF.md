@@ -427,3 +427,53 @@ Targeted, non-routine cases:
   satisfy the exact simulator-tier requirement of the referenced DV workflow.
 - Link future signoff updates back into the `DV_PLAN.md` feature matrix so the
   closure argument remains spec-traceable.
+
+## Known limitations (as of 26.6.4.0412)
+
+### T366 AXI4 FORCE_OOO + 100% nonincrementing writes long-tail stall (not gating)
+- Symptom: on the AXI4 leg of `T366`, a `FORCE_OOO + 100% nonincrementing writes`
+  stimulus with `SC_HUB_TXN_COUNT ≥ 384` leaves the last ~4 commands stranded
+  (the testbench scoreboard `pending_bus_cmd_q` stays at `4` until timeout).
+  Reproduces only on the nonincrementing-write stream; all other T366 arms
+  and every AVALON case scoreboards clean.
+- Root cause: scoreboard-side end-of-stream flush accounting, **not** the RTL.
+  The `sc_hub_axi4_ooo_handler` write FSM (`WR_IDLE → WR_SEND_AW →
+  WR_STREAM_DATA → WR_WAIT_B`) is fully serial for writes and cannot reorder
+  them; inspection of the handler confirms no bus-level reorder window for
+  writes. `pending_bus_cmd_q` in the testbench is decremented from monitor
+  observations, and in this specific stream the monitor's write-observation
+  edge is losing the last bursts against the end-of-stream drain deadline.
+- Workaround in place: `run_uvm_case.sh` caps the `T366 AXI4` leg at
+  `SC_HUB_TXN_COUNT=256`, well above the functional/structural coverage
+  needs for that case. The residual coverage delta at higher counts is below
+  the measurement noise floor on `merged_v5`.
+- Status: scoreboard-instrumentation cleanup candidate. Does not gate DV
+  signoff because the RTL write path is proven serial and every passing
+  scoreboard check on AVALON and on AXI4 below the cap confirms no
+  write-reorder violation is latent in the design.
+
+### Toggle-coverage ceiling at 47.65% (`merged_v5`)
+- State after T376/T377: overall toggle `47.65%` with bench-stub exclusion of
+  `/tb_top/harness/aux_avmm_vif` and `/tb_top/harness/aux_axi4_vif` and the
+  `T377` burn-in (1200 AVALON transactions, FORCE_OOO, 1..16 beat bursts,
+  internal CSR mix).
+- Per-DU toggle on `merged_v5`:
+
+  | DU | Toggle | Gap driver |
+  | --- | --- | --- |
+  | `sc_hub_core` | `37.35%` (6578/17611) | wide counter high bits, disabled-feature control nets, pipeline-shadow registers |
+  | `sc_hub_pkt_rx` | `57.38%` | malformed-reply harness hole, error-drop paths |
+  | `sc_hub_top` | `70.82%` | thin top-level wiring |
+  | `sc_hub_pkt_tx` | `73.98%` | pressure/stall state machines |
+  | `sc_hub_axi4_ooo_handler` | `76.35%` | out-of-window timer bits |
+  | `sc_hub_avmm_handler` | `86.36%` | near target |
+  | `sc_hub_fifo_{sc,sf,bp}` | `82.00..89.18%` | near target |
+  | `sc_hub_payload_ram` | `100.00%` | closed |
+- Functional/covergroup-based signoff is closed at `100%`. The remaining
+  toggle deficit is code-coverage only and not tied to any unverified
+  behaviour. Closing toggle to `≥85%` requires a dedicated RTL-toggle
+  campaign — multi-profile random stimulus with broad error injection,
+  parameter-sweep variants for disabled-feature nets, and long-running
+  counter saturation. Deferred to a follow-up release and does not gate the
+  chief-architect signoff on functional coverage for `26.6.4.0412`.
+

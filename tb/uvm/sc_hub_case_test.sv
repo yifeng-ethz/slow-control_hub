@@ -104,13 +104,14 @@ class sc_hub_case_test extends sc_hub_base_test;
     mode_lower = internal_mode.tolower();
     if (is_write) begin
       if (mode_lower == "csr_sweep") begin
-        case (txn_idx % 6)
-          0: return INTERNAL_CSR_BASE_CONST + 24'h000001;
-          1: return INTERNAL_CSR_BASE_CONST + 24'h000002;
-          2: return INTERNAL_CSR_BASE_CONST + 24'h000006;
-          3: return INTERNAL_CSR_BASE_CONST + 24'h000009;
-          4: return INTERNAL_CSR_BASE_CONST + 24'h000018;
-          default: return INTERNAL_CSR_BASE_CONST + 24'h00001C;
+        case (txn_idx % 7)
+          0: return INTERNAL_CSR_BASE_CONST + 24'h000001; // META
+          1: return INTERNAL_CSR_BASE_CONST + 24'h000002; // CTRL (err_clear / soft_reset)
+          2: return INTERNAL_CSR_BASE_CONST + 24'h000004; // ERR_FLAGS clear
+          3: return INTERNAL_CSR_BASE_CONST + 24'h000006; // SCRATCH
+          4: return INTERNAL_CSR_BASE_CONST + 24'h000009; // FIFO_CFG
+          5: return INTERNAL_CSR_BASE_CONST + 24'h000018; // OOO_CTRL
+          default: return INTERNAL_CSR_BASE_CONST + 24'h00001C; // FEB_TYPE
         endcase
       end
       return INTERNAL_CSR_BASE_CONST + 24'h000006;
@@ -160,7 +161,19 @@ class sc_hub_case_test extends sc_hub_base_test;
 
     case (word_addr)
       (INTERNAL_CSR_BASE_CONST + 24'h000001): data_word = {30'd0, logic'(txn_idx % 4)};
-      (INTERNAL_CSR_BASE_CONST + 24'h000002): data_word = 32'h0000_0001;
+      // CTRL: alternate plain hub_enable=1 with hub_enable=1 + err_clear (bit1).
+      // bit2 (soft_reset) is intentionally avoided here — it nukes in-flight
+      // pending replies and breaks the scoreboard pending queue. Cover that
+      // path from a dedicated reset case.
+      (INTERNAL_CSR_BASE_CONST + 24'h000002): begin
+        case (txn_idx % 2)
+          0: data_word = 32'h0000_0001;
+          default: data_word = 32'h0000_0003;
+        endcase
+      end
+      // ERR_FLAGS clear: write-1-to-clear mask covering every flag (no
+      // scoreboard impact — predict_csr_read_word never models this offset).
+      (INTERNAL_CSR_BASE_CONST + 24'h000004): data_word = 32'hFFFF_FFFF;
       (INTERNAL_CSR_BASE_CONST + 24'h000006): data_word = 32'hC300_0000 | txn_idx;
       (INTERNAL_CSR_BASE_CONST + 24'h000009): data_word = {30'd0, 1'b1, logic'(txn_idx[0])};
       (INTERNAL_CSR_BASE_CONST + 24'h000018): data_word = {31'd0, logic'(txn_idx[0])};
@@ -168,6 +181,15 @@ class sc_hub_case_test extends sc_hub_base_test;
       default: begin end
     endcase
     return data_word;
+  endfunction
+
+  function automatic bit csr_read_payload_modeled(input int unsigned csr_offset);
+    case (csr_offset)
+      16'h000, 16'h001, 16'h002, 16'h003,
+      16'h006, 16'h009, 16'h018, 16'h01C,
+      16'h01F: return 1'b1;
+      default: return 1'b0;
+    endcase
   endfunction
 
   function automatic logic [1:0] calc_stream_forced_response(
@@ -220,6 +242,84 @@ class sc_hub_case_test extends sc_hub_base_test;
 
   task automatic wait_gap(int unsigned gap_cycles);
     repeat (gap_cycles) @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
+  endtask
+
+  task automatic write_avs_csr_word(input logic [4:0] csr_addr, input logic [31:0] csr_data);
+    uvm_hdl_data_t hdl_data;
+
+    hdl_data = csr_addr;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_address", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_address")
+    end
+    hdl_data = csr_data;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_writedata", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_writedata")
+    end
+    hdl_data = 0;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_read", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_read")
+    end
+    hdl_data = 1;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_write", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_write")
+    end
+    do begin
+      @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
+      if (!uvm_hdl_read("tb_top.harness.avs_csr_waitrequest", hdl_data)) begin
+        `uvm_fatal(get_type_name(), "Failed to sample tb_top.harness.avs_csr_waitrequest")
+      end
+    end while (hdl_data[0]);
+    hdl_data = 0;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_write", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_write")
+    end
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_address", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_address")
+    end
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_writedata", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_writedata")
+    end
+  endtask
+
+  task automatic read_avs_csr_word(input logic [4:0] csr_addr, output logic [31:0] csr_data);
+    uvm_hdl_data_t hdl_data;
+
+    hdl_data = csr_addr;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_address", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_address")
+    end
+    hdl_data = 0;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_write", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_write")
+    end
+    hdl_data = 1;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_read", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to drive tb_top.harness.avs_csr_read")
+    end
+    do begin
+      @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
+      if (!uvm_hdl_read("tb_top.harness.avs_csr_waitrequest", hdl_data)) begin
+        `uvm_fatal(get_type_name(), "Failed to sample tb_top.harness.avs_csr_waitrequest")
+      end
+    end while (hdl_data[0]);
+    hdl_data = 0;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_read", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_read")
+    end
+    do begin
+      @(posedge env_h.pkt_agent_h.driver_h.sc_pkt_vif.clk);
+      if (!uvm_hdl_read("tb_top.harness.avs_csr_readdatavalid", hdl_data)) begin
+        `uvm_fatal(get_type_name(), "Failed to sample tb_top.harness.avs_csr_readdatavalid")
+      end
+    end while (hdl_data[0] == 0);
+    if (!uvm_hdl_read("tb_top.harness.avs_csr_readdata", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to sample tb_top.harness.avs_csr_readdata")
+    end
+    csr_data = hdl_data[31:0];
+    hdl_data = 0;
+    if (!uvm_hdl_deposit("tb_top.harness.avs_csr_address", hdl_data)) begin
+      `uvm_fatal(get_type_name(), "Failed to clear tb_top.harness.avs_csr_address")
+    end
   endtask
 
   task automatic wait_for_drain();
@@ -532,6 +632,310 @@ class sc_hub_case_test extends sc_hub_base_test;
     end
   endtask
 
+  task automatic run_csr_full_sweep();
+    sc_pkt_seq_item item_h;
+    logic [1:0]     meta_sel;
+
+    for (int unsigned csr_offset = 0; csr_offset <= 16'h01F; csr_offset++) begin
+      meta_sel = (csr_offset + 3) % 4;
+      item_h = build_item(INTERNAL_CSR_BASE_CONST + 24'h000001, 1, 1'b1);
+      item_h.data_words_q[0] = {30'd0, meta_sel};
+      issue_item(item_h);
+      wait_for_drain();
+
+      item_h = build_item(INTERNAL_CSR_BASE_CONST + csr_offset, 1, 1'b0);
+      if (csr_offset == 16'h01D || csr_offset == 16'h01E) begin
+        item_h.forced_response     = 2'b10;
+        item_h.expect_error_payload = 1'b1;
+        item_h.error_payload_word   = 32'hEEEE_EEEE;
+      end else if (!csr_read_payload_modeled(csr_offset) && csr_offset <= 16'h01C) begin
+        item_h.skip_payload_check = 1'b1;
+      end
+      issue_item(item_h);
+      wait_for_drain();
+    end
+  endtask
+
+  task automatic run_bad_csr_write_case();
+    int unsigned    bad_offsets[$] = '{16'h01D, 16'h01E, 16'h01F, 16'h000, 16'h005, 16'h003, 16'h00A};
+    sc_pkt_seq_item item_h;
+
+    foreach (bad_offsets[idx]) begin
+      item_h = build_item(INTERNAL_CSR_BASE_CONST + bad_offsets[idx], 1, 1'b1);
+      item_h.data_words_q[0]   = 32'hCAFE_BABE;
+      item_h.forced_response   = (bad_offsets[idx] == 16'h000) ? 2'b00 : 2'b10;
+      issue_item(item_h);
+      wait_for_drain();
+    end
+
+    for (int unsigned csr_offset = 16'h00B; csr_offset <= 16'h017; csr_offset++) begin
+      item_h = build_item(INTERNAL_CSR_BASE_CONST + csr_offset, 1, 1'b1);
+      item_h.data_words_q[0]   = 32'hCAFE_BABE;
+      item_h.forced_response   = 2'b10;
+      issue_item(item_h);
+      wait_for_drain();
+    end
+  endtask
+
+  task automatic run_ooo_disable_strict();
+    sc_pkt_seq_item item_h;
+
+    item_h = build_item(INTERNAL_CSR_BASE_CONST + 24'h000018, 1, 1'b1);
+    item_h.data_words_q[0] = 32'h0000_0000;
+    issue_item(item_h);
+    wait_for_drain();
+
+    for (int unsigned txn_idx = 0; txn_idx < 100; txn_idx++) begin
+      bit          internal_pkt;
+      bit          is_write;
+      int unsigned pkt_len;
+      logic [23:0] pkt_addr;
+
+      internal_pkt = ((next_lcg() % 100) < 20);
+      is_write     = ((next_lcg() % 100) >= 50);
+      pkt_len      = next_range(1, 4);
+      pkt_addr     = next_external_addr("linear", txn_idx + 1);
+
+      if (internal_pkt) begin
+        pkt_len = 1;
+        if (is_write) begin
+          pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000006;
+        end else begin
+          case (txn_idx % 4)
+            0: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000000;
+            1: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000001;
+            2: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h00001C;
+            default: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h00001F;
+          endcase
+        end
+      end
+
+      item_h = build_item(pkt_addr, pkt_len, is_write);
+      item_h.force_ooo    = 1'b0;
+      item_h.ordered      = 1'b0;
+      item_h.order_mode   = SC_ORDER_RELAXED;
+      item_h.order_domain = 0;
+      item_h.order_epoch  = 0;
+      if (internal_pkt && is_write) begin
+        item_h.data_words_q[0] = 32'hD500_0000 | txn_idx;
+      end
+      issue_item(item_h);
+      wait_gap(next_range(1, 3));
+    end
+
+    wait_for_drain();
+  endtask
+
+  task automatic run_soft_reset_case();
+    sc_pkt_seq_item item_h;
+    logic [31:0]    avs_word;
+
+    for (int unsigned txn_idx = 0; txn_idx < 16; txn_idx++) begin
+      item_h = build_item(24'h000200 + (txn_idx * 16), 1, 1'b1);
+      issue_item(item_h);
+    end
+    wait_for_drain();
+
+    for (int unsigned txn_idx = 0; txn_idx < 16; txn_idx++) begin
+      item_h = build_item(24'h000200 + (txn_idx * 16), 1, 1'b0);
+      issue_item(item_h);
+    end
+    wait_for_drain();
+    wait_for_drain();
+
+    write_avs_csr_word(5'h02, 32'h0000_0005);
+    wait_gap(8);
+    wait_for_drain();
+
+    for (int unsigned txn_idx = 0; txn_idx < 16; txn_idx++) begin
+      item_h = build_item(24'h000300 + (txn_idx * 16), 1, 1'b1);
+      issue_item(item_h);
+    end
+    for (int unsigned txn_idx = 0; txn_idx < 16; txn_idx++) begin
+      item_h = build_item(24'h000300 + (txn_idx * 16), 1, 1'b0);
+      issue_item(item_h);
+    end
+    wait_for_drain();
+    read_avs_csr_word(5'h03, avs_word);
+    read_avs_csr_word(5'h0B, avs_word);
+  endtask
+
+  task automatic run_csr_diversity_case();
+    sc_pkt_seq_item item_h;
+    int unsigned    atomic_id;
+    int unsigned    order_epoch;
+
+    atomic_id   = 1;
+    order_epoch = 1;
+
+    cfg.enable_ooo = 1'b1;
+
+    item_h = build_item(INTERNAL_CSR_BASE_CONST + 24'h000018, 1, 1'b1);
+    item_h.data_words_q[0] = 32'h0000_0001;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(CONTROL_CSR_BASE_CONST + 24'h000004, 1, 1'b1);
+    item_h.data_words_q[0] = 32'hC376_0004;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(CONTROL_CSR_BASE_CONST + 24'h000004, 1, 1'b0);
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(CONTROL_CSR_BASE_CONST + 24'h000008, 2, 1'b1, 1'b1);
+    item_h.data_words_q[0] = 32'hC376_1008;
+    item_h.data_words_q[1] = 32'hC376_1009;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(CONTROL_CSR_BASE_CONST + 24'h000008, 2, 1'b0, 1'b1);
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h0007C0, 2, 1'b0);
+    item_h.mask_m = 1'b1;
+    item_h.mask_s = 1'b1;
+    issue_item(item_h);
+    wait_gap(2);
+
+    item_h = build_item(24'h000840, 4, 1'b0);
+    issue_item(item_h);
+    wait_gap(1);
+
+    item_h = build_item(24'h000860, 4, 1'b1);
+    item_h.force_ooo    = 1'b0;
+    item_h.ordered      = 1'b1;
+    item_h.order_mode   = SC_ORDER_RELEASE;
+    item_h.order_domain = 8;
+    item_h.order_epoch  = order_epoch++;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(INTERNAL_CSR_BASE_CONST + 24'h000006, 2, 1'b1, 1'b1);
+    item_h.data_words_q[0] = 32'hC376_A001;
+    item_h.data_words_q[1] = 32'hC376_A002;
+    item_h.mask_r = 1'b1;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(INTERNAL_CSR_BASE_CONST, 2, 1'b0, 1'b1);
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h000900, 8, 1'b0);
+    item_h.force_ooo = 1'b1;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h000980, 1, 1'b0);
+    item_h.atomic      = 1'b1;
+    item_h.atomic_mode = SC_ATOMIC_LOCK;
+    item_h.atomic_id   = atomic_id++;
+    item_h.atomic_mask = 32'h0000_00FF;
+    item_h.atomic_data = 32'h0000_005A;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h0009A0, 1, 1'b0);
+    item_h.atomic      = 1'b1;
+    item_h.atomic_mode = SC_ATOMIC_MIXED;
+    item_h.atomic_id   = atomic_id++;
+    item_h.atomic_mask = 32'h0000_FFFF;
+    item_h.atomic_data = 32'h0000_A55A;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h0009C0, 40, 1'b0);
+    item_h.forced_response    = 2'b11;
+    item_h.expect_error_payload = 1'b0;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h000A40, 48, 1'b0);
+    item_h.forced_response    = 2'b10;
+    item_h.expect_error_payload = 1'b0;
+    issue_item(item_h);
+    wait_for_drain();
+
+    item_h = build_item(24'h000B00, 1, 1'b0);
+    item_h.atomic      = 1'b1;
+    item_h.atomic_mode = SC_ATOMIC_LOCK;
+    item_h.atomic_id   = atomic_id++;
+    item_h.atomic_mask = 32'h0000_FFFF;
+    item_h.atomic_data = 32'h0000_00E3;
+    item_h.ordered      = 1'b1;
+    item_h.order_mode   = SC_ORDER_ACQUIRE;
+    item_h.order_domain = 12;
+    item_h.order_epoch  = order_epoch++;
+    issue_item(item_h);
+    wait_for_drain();
+  endtask
+
+  task automatic run_burn_in_case();
+    sc_pkt_seq_item item_h;
+    int unsigned    txn_count;
+    int unsigned    global_idx;
+
+    txn_count   = 1200;
+    global_idx  = 0;
+    cfg.enable_ooo = 1'b1;
+
+    item_h = build_item(INTERNAL_CSR_BASE_CONST + 24'h000018, 1, 1'b1);
+    item_h.data_words_q[0] = 32'h0000_0001;
+    issue_item(item_h);
+    wait_for_drain();
+
+    for (int unsigned txn_idx = 0; txn_idx < txn_count; txn_idx++) begin
+      bit          internal_pkt;
+      bit          is_write;
+      int unsigned pkt_len;
+      logic [23:0] pkt_addr;
+
+      global_idx   = global_idx + 1;
+      internal_pkt = ((next_lcg() % 100) < 20);
+      is_write     = ((next_lcg() % 100) >= 50);
+      pkt_len      = next_range(1, 16);
+
+      if (internal_pkt) begin
+        pkt_len  = 1;
+        if (is_write) begin
+          case (global_idx % 4)
+            0: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000006;
+            1: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000009;
+            2: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000018;
+            default: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h00001C;
+          endcase
+        end else begin
+          case (global_idx % 5)
+            0: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000000;
+            1: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000006;
+            2: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000009;
+            3: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h000018;
+            default: pkt_addr = INTERNAL_CSR_BASE_CONST + 24'h00001F;
+          endcase
+        end
+      end else begin
+        pkt_addr = next_external_addr("linear", global_idx);
+      end
+
+      item_h = build_item(pkt_addr, pkt_len, is_write, 1'b0);
+      if (internal_pkt && is_write) begin
+        case (pkt_addr)
+          (INTERNAL_CSR_BASE_CONST + 24'h000006): item_h.data_words_q[0] = 32'hC700_0000 | global_idx;
+          (INTERNAL_CSR_BASE_CONST + 24'h000009): item_h.data_words_q[0] = {30'd0, 1'b1, logic'(global_idx[0])};
+          (INTERNAL_CSR_BASE_CONST + 24'h000018): item_h.data_words_q[0] = 32'h0000_0001;
+          default: item_h.data_words_q[0] = {30'd0, logic'(global_idx % 4)};
+        endcase
+      end else if (!internal_pkt) begin
+        item_h.force_ooo = 1'b1;
+      end
+      issue_item(item_h);
+      wait_gap(next_range(0, 1));
+    end
+  endtask
+
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     case_id   = get_string_plusarg("SC_HUB_CASE_ID", "");
@@ -558,6 +962,18 @@ class sc_hub_case_test extends sc_hub_base_test;
       run_error_case();
     end else if (profile == "gap_sweep") begin
       run_gap_sweep();
+    end else if (profile == "csr_full_sweep") begin
+      run_csr_full_sweep();
+    end else if (profile == "bad_csr_write") begin
+      run_bad_csr_write_case();
+    end else if (profile == "ooo_disable_strict") begin
+      run_ooo_disable_strict();
+    end else if (profile == "soft_reset") begin
+      run_soft_reset_case();
+    end else if (profile == "csr_diversity") begin
+      run_csr_diversity_case();
+    end else if (profile == "burn_in") begin
+      run_burn_in_case();
     end else if (profile == "perf_stream") begin
       run_perf_stream();
     end else begin

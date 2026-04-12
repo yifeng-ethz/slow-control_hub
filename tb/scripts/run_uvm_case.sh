@@ -216,15 +216,30 @@ run_perf_stream_case() {
   local extra_vlog="${4-}"
   local extra_vsim="${5-}"
   local timeout_cycles="${6-180000}"
-  local vsim_opts="+SC_HUB_CASE_ID=${case_id} +SC_HUB_PROFILE=perf_stream +SC_HUB_LAT_PROFILE=${lat_profile} +TIMEOUT_CYCLES=${timeout_cycles}"
+  run_profile_case "$case_id" "$bus" "$lat_profile" "perf_stream" "$extra_vlog" "$extra_vsim" "$timeout_cycles"
+}
+
+run_profile_case() {
+  local case_id="$1"
+  local bus="$2"
+  local lat_profile="$3"
+  local profile="$4"
+  local extra_vlog="${5-}"
+  local extra_vsim="${6-}"
+  local timeout_cycles="${7-180000}"
+  local vsim_opts="+SC_HUB_CASE_ID=${case_id} +SC_HUB_PROFILE=${profile} +TIMEOUT_CYCLES=${timeout_cycles}"
+
+  if [ -n "$lat_profile" ]; then
+    vsim_opts+=" +SC_HUB_LAT_PROFILE=${lat_profile}"
+  fi
 
   if [ -n "$extra_vsim" ]; then
     vsim_opts+=" ${extra_vsim}"
   fi
   vsim_opts="$(apply_runtime_overrides "$vsim_opts")"
   CURRENT_CASE_ID="$case_id"
-  CURRENT_PROFILE=perf_stream
-  run_uvm_subrun "$bus" "${case_id}:perf_stream" "$extra_vlog" "$vsim_opts"
+  CURRENT_PROFILE="$profile"
+  run_uvm_subrun "$bus" "${case_id}:${profile}" "$extra_vlog" "$vsim_opts"
 }
 
 run_speedup_pair() {
@@ -639,6 +654,26 @@ run_one() {
     T371)
       run_perf_stream_case "$case_id" "AVALON" "FIXED8" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=1 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=85 +SC_HUB_INTERNAL_MODE=csr_sweep +SC_HUB_ORDERING_PCT=5 +SC_HUB_NONINCREMENT_PCT=0 +SC_HUB_MASK_PCT=0 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 280000
       run_perf_stream_case "$case_id" "AXI4" "UNIFORM4_50" ""         "+SC_HUB_TXN_COUNT=384 +SC_HUB_FIXED_LEN=1 +SC_HUB_READ_PCT=70 +SC_HUB_INTERNAL_PCT=85 +SC_HUB_INTERNAL_MODE=csr_sweep +SC_HUB_ORDERING_PCT=5 +SC_HUB_ATOMIC_PCT=0 +SC_HUB_NONINCREMENT_PCT=0 +SC_HUB_MASK_PCT=0 +SC_HUB_FORCE_OOO=1 +SC_HUB_CFG_ENABLE_OOO=1 +SC_HUB_CHECK_ORDER_EPOCH_MONO=0" 320000
+      ;;
+    T372)
+      run_profile_case "$case_id" "AVALON" "FIXED1" "csr_full_sweep" "" "" 280000
+      ;;
+    T373)
+      run_profile_case "$case_id" "AVALON" "FIXED1" "bad_csr_write" "" "" 200000
+      ;;
+    T374)
+      run_profile_case "$case_id" "AVALON" "FIXED1" "ooo_disable_strict" "+define+SC_HUB_TB_AVALON_OOO_ENABLED" "" 260000
+      run_profile_case "$case_id" "AXI4"   "FIXED1" "ooo_disable_strict" "" "" 280000
+      ;;
+    T375)
+      run_profile_case "$case_id" "AVALON" "FIXED1" "soft_reset" "" "" 220000
+      ;;
+    T376)
+      run_profile_case "$case_id" "AVALON" "UNIFORM4_50" "csr_diversity" "" "" 360000
+      run_profile_case "$case_id" "AXI4"   "UNIFORM4_50" "csr_diversity" "" "" 380000
+      ;;
+    T377)
+      run_profile_case "$case_id" "AVALON" "UNIFORM4_50" "burn_in" "" "" 1800000
       ;;
     *)
       echo "run_uvm_case.sh: unsupported case id ${case_id}" >&2

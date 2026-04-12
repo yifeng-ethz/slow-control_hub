@@ -1,6 +1,6 @@
 # ============================================================================
-# sc_hub_v2 "Slow Control Hub v2" v26.6.1
-# Yifeng Wang 2026.04.08
+# sc_hub_v2 "Slow Control Hub v2" v26.6.4.0412
+# Yifeng Wang 2026.04.12
 #
 # Comprehensive _hw.tcl for sc_hub_v2 with:
 #   - Preset-based configuration (JESD204B GUI style)
@@ -29,7 +29,7 @@ package require -exact qsys 16.1
 
 set_module_property NAME                    sc_hub_v2
 set_module_property DISPLAY_NAME            "Slow Control Hub Mu3E IP"
-set_module_property VERSION                 26.6.1.0411
+set_module_property VERSION                 26.6.4.0412
 set_module_property DESCRIPTION             "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP                   "Mu3e Control Plane/Modules"
 set_module_property AUTHOR                  "Yifeng Wang"

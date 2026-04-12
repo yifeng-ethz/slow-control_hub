@@ -1,6 +1,15 @@
 -- File name: sc_hub_pkt_rx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
+-- Version : 26.2.31
+-- Date    : 20260412
+-- Change  : WAITING_WRITE_SPACE now treats a held-stable repeat of the
+--           already-latched word as a no-op instead of a drop. Avalon-style
+--           upstream holds data stable across backpressured cycles and the
+--           previous "drop on second non-idle" rule lost every long burst
+--           that hit WAITING_WRITE_SPACE (e.g. back-to-back 255/256-beat
+--           writes in the UVM burst_len_sweep).
+-- =======================================
 -- Version : 26.2.30
 -- Date    : 20260411
 -- Change  : Make WAITING_WRITE_SPACE recover instead of wedging when the
@@ -640,6 +649,11 @@ begin
                                     waiting_word_valid <= '1';
                                     waiting_word_data  <= i_download_data;
                                     waiting_word_datak <= i_download_datak;
+                                elsif (i_download_data = waiting_word_data and i_download_datak = waiting_word_datak) then
+                                    -- Upstream is holding the same non-idle word stable across the
+                                    -- backpressured window (valid Avalon-style handshake). Ignore
+                                    -- it; granted-high will consume the already-latched copy.
+                                    null;
                                 else
                                     drop_packet_v := true;
                                     debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;

@@ -119,6 +119,42 @@ architecture rtl of sc_hub_axi4_core is
     type slot_unsigned16_array_t is array (natural range <>) of unsigned(15 downto 0);
     type slot_unsigned8_array_t is array (natural range <>) of unsigned(7 downto 0);
 
+    -- Quartus Prime 18.1 Standard Edition does not ship to_hstring in its
+    -- VHDL-2008 std_logic_1164 package, so the `report ... to_hstring(...)`
+    -- debug statements below need a locally defined helper. Report bodies
+    -- are simulation-only, so this function is stripped at synthesis.
+    function to_hstring(value : std_logic_vector) return string is
+        constant NIBBLES_C : positive := (value'length + 3) / 4;
+        variable padded_v  : std_logic_vector(NIBBLES_C * 4 - 1 downto 0) := (others => '0');
+        variable nibble_v  : std_logic_vector(3 downto 0);
+        variable ret_v     : string(1 to NIBBLES_C);
+    begin
+        padded_v(value'length - 1 downto 0) := value;
+        for i in 0 to NIBBLES_C - 1 loop
+            nibble_v := padded_v((NIBBLES_C - 1 - i) * 4 + 3 downto (NIBBLES_C - 1 - i) * 4);
+            case nibble_v is
+                when "0000" => ret_v(i + 1) := '0';
+                when "0001" => ret_v(i + 1) := '1';
+                when "0010" => ret_v(i + 1) := '2';
+                when "0011" => ret_v(i + 1) := '3';
+                when "0100" => ret_v(i + 1) := '4';
+                when "0101" => ret_v(i + 1) := '5';
+                when "0110" => ret_v(i + 1) := '6';
+                when "0111" => ret_v(i + 1) := '7';
+                when "1000" => ret_v(i + 1) := '8';
+                when "1001" => ret_v(i + 1) := '9';
+                when "1010" => ret_v(i + 1) := 'A';
+                when "1011" => ret_v(i + 1) := 'B';
+                when "1100" => ret_v(i + 1) := 'C';
+                when "1101" => ret_v(i + 1) := 'D';
+                when "1110" => ret_v(i + 1) := 'E';
+                when "1111" => ret_v(i + 1) := 'F';
+                when others => ret_v(i + 1) := 'X';
+            end case;
+        end loop;
+        return ret_v;
+    end function;
+
     constant PAYLOAD_ADDR_WIDTH_CONST : positive := ceil_log2_func(MAX_BURST_WORDS_CONST);
 
     signal ext_slot_state          : ext_slot_state_array_t(0 to OOO_SLOT_COUNT_G - 1) := (others => SLOT_FREE);
