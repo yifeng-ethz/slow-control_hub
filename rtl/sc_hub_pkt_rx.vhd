@@ -137,6 +137,9 @@ architecture rtl of sc_hub_pkt_rx is
     signal payload_space_granted : std_logic := '0';
     signal payload_space_ready   : std_logic := '1';
     signal pkt_info_is_internal  : std_logic := '0';
+    signal waiting_word_valid   : std_logic := '0';
+    signal waiting_word_data    : std_logic_vector(31 downto 0) := (others => '0');
+    signal waiting_word_datak   : std_logic_vector(3 downto 0) := (others => '0');
 
     -- Local reset register to reduce fanout and routing delay from the
     -- Qsys reset controller.  The upstream r_sync_rst already provides a
@@ -403,6 +406,9 @@ begin
                 trailer_wait_committed     <= '0';
                 payload_check_words        <= 0;
                 pkt_info_is_internal       <= '0';
+                waiting_word_valid       <= '0';
+                waiting_word_data        <= (others => '0');
+                waiting_word_datak       <= (others => '0');
             else
                 pkt_drop_pulse      <= '0';
                 fifo_overflow_pulse <= '0';
@@ -612,32 +618,50 @@ begin
                                     rx_state <= WAITING_TRAILER;
                                 else
                                     payload_check_words <= to_integer(unsigned(i_download_data(15 downto 0)));
+                                    waiting_word_valid  <= '0';
+                                    waiting_word_data   <= (others => '0');
+                                    waiting_word_datak  <= (others => '0');
                                     rx_state <= WAITING_WRITE_SPACE;
                                 end if;
                             end if;
 
                         when WAITING_WRITE_SPACE =>
                             if (drop_packet_v = true) then
-                                fifo_rollback <= '1';
-                                rx_state      <= IDLING;
+                                fifo_rollback      <= '1';
+                                waiting_word_valid <= '0';
+                                rx_state           <= IDLING;
                             elsif (payload_space_granted = '0') then
                                 if (is_skip_v = true or is_idle_v = true) then
                                     null;
+                                elsif (is_trailer_v = true or is_preamble_v = true) then
+                                    drop_packet_v := true;
+                                    debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;
+                                elsif (waiting_word_valid = '0') then
+                                    waiting_word_valid <= '1';
+                                    waiting_word_data  <= i_download_data;
+                                    waiting_word_datak <= i_download_datak;
                                 else
                                     drop_packet_v := true;
                                     debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;
                                 end if;
                             else
-                                if (is_skip_v = true) then
+                                if (waiting_word_valid = '1') then
+                                    fifo_write_en      <= '1';
+                                    fifo_write_data    <= waiting_word_data;
+                                    first_write_word   <= waiting_word_data;
+                                    waiting_word_valid <= '0';
+                                elsif (is_skip_v = true) then
                                     null;
                                 elsif (is_trailer_v = true or is_preamble_v = true) then
                                     drop_packet_v := true;
                                     debug_ws_trailer_drop_count <= debug_ws_trailer_drop_count + 1;
                                 else
-                                    fifo_write_en   <= '1';
-                                    fifo_write_data <= i_download_data;
+                                    fifo_write_en    <= '1';
+                                    fifo_write_data  <= i_download_data;
                                     first_write_word <= i_download_data;
+                                end if;
 
+                                if (fifo_write_en = '1' or waiting_word_valid = '1' or (is_skip_v = false and is_trailer_v = false and is_preamble_v = false)) then
                                     if (unsigned(pkt_info_work.rw_length) = 1) then
                                         rx_state <= WAITING_TRAILER;
                                     else
@@ -647,7 +671,6 @@ begin
                                     write_words_seen <= 1;
                                 end if;
                             end if;
-
                         when ATOMIC_MASKING =>
                             if (drop_packet_v = true) then
                                 fifo_rollback <= '1';
@@ -724,6 +747,9 @@ begin
                         pkt_drop_count <= sat_inc16_func(pkt_drop_count);
                         rx_state         <= IDLING;
                         trailer_wait_committed_v := '0';
+                        waiting_word_valid <= '0';
+                        waiting_word_data  <= (others => '0');
+                        waiting_word_datak <= (others => '0');
                     elsif (commit_packet_v = true) then
                         if (trailer_wait_committed_v = '1') then
                             rx_state                 <= IDLING;
@@ -779,6 +805,9 @@ begin
                         end if;
                         rx_state         <= IDLING;
                         payload_check_words <= 0;
+                        waiting_word_valid <= '0';
+                        waiting_word_data  <= (others => '0');
+                        waiting_word_datak <= (others => '0');
                     end if;
 
                     if (enqueue_queue_v = true) then

@@ -110,6 +110,7 @@ architecture rtl of sc_hub_axi4_ooo_handler is
     signal rd_done_tag_reg       : std_logic_vector(3 downto 0) := (others => '0');
     signal rd_response_reg       : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
     signal rd_timeout_pulse      : std_logic := '0';
+    signal ar_reuse_hold         : std_logic := '0';
 
     signal wr_state              : wr_state_t := WR_IDLE;
     signal wr_address_reg        : std_logic_vector(17 downto 0) := (others => '0');
@@ -173,8 +174,20 @@ begin
     m_axi_arsize  <= "010";
     m_axi_arburst <= "00" when (ar_pending_nonincrement = '1') else "01";
     m_axi_arlock  <= ar_pending_lock;
-    m_axi_arvalid <= ar_pending_valid;
+    m_axi_arvalid <= ar_pending_valid and not ar_reuse_hold;
     m_axi_rready  <= '1';
+
+    ar_reuse_hold <= '1'
+        when (
+            OOO_CFG_ENABLE_G and
+            ar_pending_valid = '1' and
+            m_axi_rvalid = '1' and
+            m_axi_rlast = '1' and
+            unsigned(m_axi_rid) < MAX_READ_OUTSTANDING_G and
+            rd_active(to_integer(unsigned(m_axi_rid))) = '1' and
+            m_axi_rid = ar_pending_tag
+        )
+        else '0';
 
     o_rd_cmd_ready <= '1'
         when (
@@ -253,34 +266,6 @@ begin
                 read_done_seen_v    := false;
                 beat_seen_v         := (others => false);
 
-                if (i_rd_cmd_valid = '1' and o_rd_cmd_ready = '1') then
-                    ar_pending_valid   <= '1';
-                    ar_pending_address <= i_rd_cmd_address;
-                    ar_pending_length  <= unsigned(i_rd_cmd_length);
-                    ar_pending_nonincrement <= i_rd_cmd_nonincrement;
-                    ar_pending_lock    <= i_rd_cmd_lock;
-                    if (OOO_CFG_ENABLE_G) then
-                        ar_pending_tag <= i_rd_cmd_tag;
-                    else
-                        ar_pending_tag <= (others => '0');
-                    end if;
-                elsif (ar_pending_valid = '1' and m_axi_arready = '1') then
-                    if (OOO_CFG_ENABLE_G) then
-                        rid_idx_v := to_integer(unsigned(ar_pending_tag));
-                    else
-                        rid_idx_v := 0;
-                    end if;
-                    if (rid_idx_v < MAX_READ_OUTSTANDING_G) then
-                        rd_active(rid_idx_v)          <= '1';
-                        rd_beats_remaining(rid_idx_v) <= unsigned(ar_pending_length);
-                        rd_timeout_counter(rid_idx_v) <= 0;
-                        rd_response_accum(rid_idx_v)  <= SC_RSP_OK_CONST;
-                    end if;
-                    ar_pending_valid <= '0';
-                    ar_pending_lock  <= '0';
-                    ar_pending_nonincrement <= '0';
-                end if;
-
                 if (m_axi_rvalid = '1') then
                     if (OOO_CFG_ENABLE_G) then
                         rid_idx_v := to_integer(unsigned(m_axi_rid));
@@ -321,6 +306,37 @@ begin
                             rd_beats_remaining(rid_idx_v) <= rd_beats_remaining(rid_idx_v) - 1;
                         end if;
                     end if;
+                end if;
+
+                if (i_rd_cmd_valid = '1' and o_rd_cmd_ready = '1') then
+                    ar_pending_valid   <= '1';
+                    ar_pending_address <= i_rd_cmd_address;
+                    ar_pending_length  <= unsigned(i_rd_cmd_length);
+                    ar_pending_nonincrement <= i_rd_cmd_nonincrement;
+                    ar_pending_lock    <= i_rd_cmd_lock;
+                    if (OOO_CFG_ENABLE_G) then
+                        ar_pending_tag <= i_rd_cmd_tag;
+                    else
+                        ar_pending_tag <= (others => '0');
+                    end if;
+                elsif (ar_pending_valid = '1' and ar_reuse_hold = '0' and m_axi_arready = '1') then
+                    if (OOO_CFG_ENABLE_G) then
+                        rid_idx_v := to_integer(unsigned(ar_pending_tag));
+                    else
+                        rid_idx_v := 0;
+                    end if;
+                    if (rid_idx_v < MAX_READ_OUTSTANDING_G) then
+                        assert rd_active(rid_idx_v) = '0'
+                            report "sc_hub_axi4_ooo_handler: AR tag reused while prior read is still active"
+                            severity error;
+                        rd_active(rid_idx_v)          <= '1';
+                        rd_beats_remaining(rid_idx_v) <= unsigned(ar_pending_length);
+                        rd_timeout_counter(rid_idx_v) <= 0;
+                        rd_response_accum(rid_idx_v)  <= SC_RSP_OK_CONST;
+                    end if;
+                    ar_pending_valid <= '0';
+                    ar_pending_lock  <= '0';
+                    ar_pending_nonincrement <= '0';
                 end if;
 
                 for idx in 0 to MAX_READ_OUTSTANDING_G - 1 loop
