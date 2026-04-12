@@ -1,0 +1,32 @@
+{
+  "case_id": "SMOKE-BASIC",
+  "title": "Directed smoke_basic bring-up",
+  "kind": "directed",
+  "group": "smoke",
+  "alias": "smoke_basic",
+  "status": "published",
+  "published_at": "2026-04-11T20:54:01.425947+00:00",
+  "artifacts": [
+    {
+      "label": "VCD",
+      "type": "vcd",
+      "href": "/tmp/sc_hub_smoke_basic.vcd"
+    },
+    {
+      "label": "GTKWave Save",
+      "type": "gtkw",
+      "href": "waves/templates/sc_hub_wave_template.gtkw"
+    },
+    {
+      "label": "Summary",
+      "type": "markdown",
+      "href": "waves/cases/SMOKE-BASIC/summary.md"
+    }
+  ],
+  "markers": [
+    "T0",
+    "T1",
+    "T2"
+  ],
+  "notes": "Reference smoke waveform. VCD exists; case-specific GTKWave curation still pending."
+}

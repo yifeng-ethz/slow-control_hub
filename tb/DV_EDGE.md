@@ -1,8 +1,9 @@
 # SC_HUB v2 DV — Edge Cases
 
 **Parent:** [DV_PLAN.md](DV_PLAN.md)
-**ID Range:** T400-T449
-**Total:** 50 cases
+**Canonical ID Range:** E001-E128
+**Current Implementation Aliases:** T400-T449 (implemented subset)
+**Total:** 128 cases
 **Method:** All directed (D)
 
 These tests exercise near-boundary conditions: non-power-of-2 burst lengths, address boundaries, near-full buffers, odd configurations, and scenarios that are intentionally close to failure but must not fail. The hub must handle all of these without hanging, corrupting data, or leaking resources.
@@ -102,3 +103,118 @@ Tests at unusual but valid configurations, and interaction edge cases between fe
 | T447 | AVMM | EXT_PLD_DEPTH=64 with L=65 write | Payload depth = 64. Send L=65 write. | Must backpressure at admission (can't allocate 65 lines). | SIZE-02 edge |
 | T448 | AVMM | Address at CSR boundary: 0xFE7F (just below CSR) | `send_read(0xFE7F, 1)` | Routed to external bus (NOT internal CSR). BFM responds. | T124 extended |
 | T449 | AVMM | Address at CSR boundary: 0xFEA0 (just above CSR) | `send_read(0xFEA0, 1)` | Routed to external bus. If unmapped, DECODEERROR. NOT internal CSR. | T124 extended |
+
+
+---
+
+## 4. Planned Expansion Cases (E051-E128)
+
+The cases below extend `DV_EDGE` to the workflow-required volume. They are **canonical plan entries only** today: they document specific boundary conditions that should exist in the regression, but they do not yet have runnable `Txxx` implementations.
+
+### 4.1 Packet Framing and Bubble Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E051 | AVMM | Single bubble after preamble | Insert one legal idle word between header words | Bubble legality has historically caused parser wedges. |
+| E052 | AVMM | Bubble before trailer on write | Long write with a one-cycle gap before trailer | Boundary between payload completion and trailer recognition is fragile. |
+| E053 | AVMM | Bubble every other data word | Legal sparse write stream | Ensures payload counters key on real data, not cycle count. |
+| E054 | AVMM | Consecutive bubbles at payload start | `L=16` write with 4-cycle gap after header | Tests whether parser arm/disarm logic is truly data-driven. |
+| E055 | AVMM | Consecutive bubbles at payload end | `L=16` write with 4-cycle gap before last data word | Looks for premature trailer expectation. |
+| E056 | AVMM | Read packet with gap between addr and len words | Legal read framing with delay | Read path should be as tolerant as write path. |
+| E057 | AVMM | Back-to-back packets with one idle separator | Minimal legal inter-packet spacing | Exposes parser reset timing issues. |
+| E058 | AVMM | Back-to-back packets with no extra idle beyond trailer transition | Tightest legal packet cadence | Defines minimum recovery requirement. |
+| E059 | AVMM | Long run of idles then packet | 10k idles then one command | Checks for watchdog or stale state after extended inactivity. |
+| E060 | AVMM | Skip characters embedded in maximum burst | `L=256` write with periodic K28.5 skip words | Historically easy place to lose length accounting. |
+| E061 | AVMM | Header words split by backpressure-ready toggling | Vary `i_sc_rdy` around header receipt | Confirms ready gating does not corrupt header assembly. |
+| E062 | AVMM | Trailer immediately followed by next preamble | Two packets, zero extra spacing | Tests parser handoff at the exact boundary cycle. |
+| E063 | AVMM | Legal read after bubble-heavy write | Bubble-heavy write then ordinary read | Recovery boundary after odd framing matters more than framing alone. |
+
+### 4.2 Address, Decode, and Length Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E064 | AVMM | Lowest external address with max burst | Read from `0x000000`, `L=256` | Existing tests cover pieces, not the combined boundary. |
+| E065 | AVMM | Highest 24-bit address with single read | Read from `0xFFFFFF`, `L=1` | Validates full-address-width handling in the parser and bus handler. |
+| E066 | AVMM | Highest 24-bit address with short write | Write `0xFFFFFF`, `L=4` | Write path must not truncate top address bits. |
+| E067 | AVMM | Address wrap hazard at `0xFFFFFE`, `L=4` | Sequential access crosses 24-bit top boundary | Defines expected behavior before integration finds it accidentally. |
+| E068 | AVMM | CSR boundary minus burst | Start just below CSR window with `L=4` | Ensures decode is based on start address contract, not per-beat drift. |
+| E069 | AVMM | CSR boundary plus burst | Start just above CSR window with `L=4` | Symmetric boundary check. |
+| E070 | AVMM | Sparse unmapped region read cluster | 16 reads across decode holes | Finds decode-table off-by-one errors hidden by single-address tests. |
+| E071 | AXI4 | Highest address with fixed burst | AXI4 read at `0xFFFFFF`, `L=8` | Mirrors AVMM width check on AXI4 path. |
+| E072 | AXI4 | Nonincrement write at high address | Fixed-address write burst at top of map | Exercises address-hold logic with high bits set. |
+| E073 | AVMM | Length one less than payload depth | Parameterized depth boundary | Different from fixed 64/256 edges already listed. |
+| E074 | AVMM | Length equal to payload depth plus address hotspot | Param sweep around exact resource boundary | Combines depth limit with decode hot spot. |
+| E075 | AVMM | Zero-length ordered barrier | Release or acquire with `L=0` at high address | Barrier packets without payload are easy to under-test. |
+| E076 | AVMM | Maximum length nonincrement read | `L=256`, nonincrement, one address | Required once nonincrement is part of the contract. |
+
+### 4.3 Queue, Credit, and Buffer Threshold Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E077 | AVMM | Packet queue exactly full then one more read | Fill queue to `PKT_QUEUE_DEPTH` | Defines off-by-one behavior at queue full. |
+| E078 | AVMM | Packet queue drains from full to empty with alternating reads/writes | Fill, then release naturally | Checks head/tail wrap at both extremes. |
+| E079 | AVMM | Payload free count at one entry remaining | Leave exactly one line free, then send `L=1` | Smallest successful allocation boundary. |
+| E080 | AVMM | Payload free count at one entry remaining, send `L=2` | Same setup, `L=2` | Smallest failing allocation boundary. |
+| E081 | AVMM | Upload credit exact-fit response | Fill upload credits exactly with one long read reply | Exact-fit boundaries often hide miscount bugs. |
+| E082 | AVMM | Upload credit one word short | Long read when one credit short | Needed to prove backpressure rather than silent truncation. |
+| E083 | AVMM | Header queue one slot from full with internal CSR request | External load nearly full plus CSR read | Validates reserved-slot arithmetic at boundary. |
+| E084 | AXI4 | Reorder queue one slot from full | OoO enabled, fill scoreboard to `N-1`, then one more | Defines safe saturation point. |
+| E085 | AXI4 | Reorder queue exact full | Fill to `N`, then observe stall semantics | Pairs with E084 to catch off-by-one bugs. |
+| E086 | AXI4 | Reorder queue wrap boundary | Long run forcing ID/slot wrap | Boundary condition distinct from ordinary occupancy. |
+| E087 | AVMM | Credit return and immediate reallocate same cycle | Response frees credits while next request admits | Checks combinational/sequential ordering assumptions. |
+| E088 | AVMM | Simultaneous internal and external slot demand at `N-1` occupancy | One external and one internal arrive together | Arbitration boundaries are frequent tie-break bugs. |
+| E089 | AVMM | Soft reset at near-full payload | Reset while every pool is near threshold | Proves full reclamation from worst legal occupancy. |
+
+### 4.4 Ordering and Atomic Contract Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E090 | AVMM | Nonincrement acquire read | Fixed-address acquire burst | Contract interaction between nonincrement and ordering must be explicit. |
+| E091 | AVMM | Nonincrement release write | Fixed-address release burst | Same for write-side barrier semantics. |
+| E092 | AVMM | Atomic with full mask `0xFFFFFFFF` | Atomic writeback touches all bits | Mask extremes deserve direct boundary coverage. |
+| E093 | AVMM | Atomic with zero mask | Atomic request that should degenerate to read | Good place for contract ambiguity unless defined. |
+| E094 | AVMM | Atomic on CSR boundary address | Address near internal/external split | Confirms atomic decode never crosses into unsupported internal path. |
+| E095 | AVMM | Two domains issuing acquire on same address | Domains 0 and 1 contend at one location | Domain logic should isolate ordering, not alias on address. |
+| E096 | AVMM | Release on domain 15 with all lower domains busy | Highest domain index boundary | Array indexing bugs tend to hide at the top entry. |
+| E097 | AVMM | Atomic immediately after release drain completion | Issue atomic on the first release-free cycle | Catches stale serialization flags. |
+| E098 | AVMM | Acquire immediately before atomic reply | Force boundary between hold logic and lock release | Another stale-flag hotspot. |
+| E099 | AXI4 | OoO enabled, same-domain acquire/release pair | One domain, multiple outstanding | Needed once AXI4+ordering is a supported mix. |
+| E100 | AXI4 | OoO enabled, 16-domain relaxed traffic plus one atomic domain | Domain fanout plus lock | Finds scoreboard pressure under maximal domain spread. |
+| E101 | AVMM | Repeated barrier-only packets | Sequence of `L=0` acquire/release packets | Ensures barrier bookkeeping can drain without payload traffic. |
+| E102 | AVMM | Nonincrement atomic hotspot soak | Short repeated fixed-address atomics | Closest thing to an MMIO register-file atomic workload. |
+
+### 4.5 Reset, Timeout, and Recovery Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E103 | AVMM | Soft reset one cycle before read completion | Reset on the last wait cycle | Boundary between successful completion and reset discard. |
+| E104 | AVMM | Soft reset one cycle after read completion | Reset immediately after reply enqueue | Checks that completed data is not double-freed. |
+| E105 | AVMM | Soft reset one cycle before write acceptance | Reset at write boundary | Write-visibility contract must be explicit at the edge. |
+| E106 | AVMM | Read timeout exactly at threshold | Stall for `RD_TIMEOUT_CYCLES` | Off-by-one timeout bugs are common. |
+| E107 | AVMM | Read timeout one cycle below threshold | Stall for `RD_TIMEOUT_CYCLES-1` | Companion case to E106. |
+| E108 | AVMM | Write timeout exactly at threshold | Waitrequest held for `WR_TIMEOUT_CYCLES` | Same off-by-one on write side. |
+| E109 | AVMM | Write timeout one cycle below threshold | Companion to E108 | Ensures no premature timeout. |
+| E110 | AXI4 | Reset while reorder queue non-empty but no payload outstanding | AXI4 OoO mid-flight edge | Distinguishes scoreboard reset from payload reset. |
+| E111 | AXI4 | Reset while last reordered beat returns | Completion/reset race | Historically a common fencepost bug. |
+| E112 | AVMM | Recovery packet on first cycle after timeout clear | Issue new read immediately after timeout handling | Proves hub does not need a dead cycle to recover. |
+| E113 | AVMM | Consecutive different timeouts | Read timeout then write timeout | Ensures error bookkeeping resets correctly between modes. |
+| E114 | AVMM | Reset during legal bubble-heavy packet | Reset with parser mid-bubble | Mixes two fragile contracts: framing tolerance and reset. |
+| E115 | AVMM | Hardware reset during internal CSR response | Reset while internal path, not external, is active | Internal path deserves its own boundary case. |
+
+### 4.6 Configuration Tuple Boundaries -- 13 planned cases
+
+| Canonical ID | Bus | Scenario | Planned stimulus | Why it exists |
+|---|---|---|---|---|
+| E116 | AVMM | Smallest legal fully featured config | Minimal depths, ordering and atomics on | Defines lower bound for supported configuration tuple. |
+| E117 | AVMM | Largest supported queue/depth tuple | Max depths everywhere | Upper bound needs a dedicated plan row. |
+| E118 | AVMM | OoO enabled with smallest reorder window | AXI4 OoO, window=1 | Distinguishes “enabled but ineffective” from actually broken. |
+| E119 | AVMM | Ordering enabled with zero external traffic | Barrier-only config sanity | Removes external bus effects from ordering checks. |
+| E120 | AVMM | Atomic enabled with internal slots minimum | Tight recovery path plus lock feature | Couples two sensitive knobs. |
+| E121 | AVMM | Nonincrement plus max burst plus minimal payload headroom | Deliberately harsh legal tuple | Good boundary for future integration regressions. |
+| E122 | AXI4 | OoO plus smallest payload depth that still claims support | Stress advertised capability boundary | Prevents overclaiming supported tuples. |
+| E123 | AVMM | Max domain count plus minimal CSR reservation | Domain table max with scarce internal slots | Another array-boundary plus starvation mix. |
+| E124 | AVMM | Feature tuple with ordering off but atomics on | Legal asymmetric config | Needs explicit plan coverage if capability register permits it. |
+| E125 | AVMM | Feature tuple with atomics off but ordering on | Complementary asymmetric config | Same reason as E124. |
+| E126 | AVMM | Feature tuple with store-and-forward off in trusted-link mode | Trusted link optimization boundary | Prevents the optimization path from being entirely undocumented. |
+| E127 | AVMM | Feature tuple with HUB_CAP disabled | Minimal observability config | Tooling must still behave sanely without optional metadata. |
+| E128 | AVMM | Feature tuple matching feb_system integration exactly | Canonical integration config snapshot | Keeps the standalone plan anchored to the real system tuple. |

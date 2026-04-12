@@ -1,8 +1,9 @@
 # SC_HUB v2 DV — Basic Functional Cases
 
 **Parent:** [DV_PLAN.md](DV_PLAN.md)
-**ID Range:** T001-T128 (legacy v1), T200-T249 (new v2)
-**Total:** 155 cases
+**Canonical ID Range:** B001-B152
+**Current Implementation Aliases:** table-order overlay across T001-T060, T077-T112, T123-T128, T200-T249
+**Total:** 152 cases
 
 This document covers bring-up, protocol correctness, and basic feature validation. Every test here must pass before performance, edge, or error tests are meaningful.
 

@@ -21,6 +21,7 @@ class sc_hub_sweep_test extends sc_hub_base_test;
 
     phase.raise_objection(this);
     wait_for_testbench_settle();
+    configure_runtime_ctrls();
 
     for (pass_idx = 0; pass_idx < cfg.sweep_iterations; pass_idx++) begin
       if (cfg.enable_addr_sweep) begin

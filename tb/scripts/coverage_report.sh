@@ -1,44 +1,101 @@
 #!/usr/bin/env bash
-# ============================================================================
-# coverage_report.sh — Coverage helper for sc_hub TB
-# ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-TRANSCRIPT_DIR="${TB_DIR}/transcript"
-OUTPUT_DIR="${TB_DIR}/transcript/coverage"
+REPO_ROOT="$(cd "$TB_DIR/.." && pwd)"
+TRANSCRIPT_DIR="${TB_DIR}/sim_runs"
+OUTPUT_DIR="${TB_DIR}/sim_runs/coverage"
 
 mkdir -p "$OUTPUT_DIR"
+
+find_vcover() {
+  local qh="${QUESTA_HOME-}"
+  local cand
+  for cand in     "${qh}/bin/vcover"     "${qh}/linux_x86_64/vcover"     /data1/intelFPGA_pro/23.1/questa_fe/bin/vcover     /data1/intelFPGA_pro/23.1/questa_fe/linux_x86_64/vcover     /data1/intelFPGA_pro/23.1/questa_fse/bin/vcover     /data1/intelFPGA_pro/23.1/questa_fse/linux_x86_64/vcover
+  do
+    if [ -n "$cand" ] && [ -x "$cand" ]; then
+      printf '%s
+' "$cand"
+      return 0
+    fi
+  done
+  if command -v vcover >/dev/null 2>&1; then
+    command -v vcover
+    return 0
+  fi
+  return 1
+}
+
+rtl_srcfile_arg() {
+  local files=()
+  local joined=""
+  local path
+  for path in "$REPO_ROOT"/rtl/*.vhd; do
+    [ -f "$path" ] || continue
+    files+=("$(readlink -f "$path")")
+  done
+  if [ "${#files[@]}" -eq 0 ]; then
+    echo "rtl_srcfile_arg: no RTL files found" >&2
+    return 1
+  fi
+  joined=$(IFS=+; echo "${files[*]}")
+  printf '%s
+' "-srcfile=${joined}"
+}
+
+covg_srcfile_arg() {
+  printf '%s
+' "-srcfile=$(readlink -f "$TB_DIR/uvm/sc_hub_cov_collector.sv")"
+}
 
 collect_db() {
   local test_name="${1:-smoke_basic}"
   local db_name="${2:-${test_name}}"
-  local ucd_path="${OUTPUT_DIR}/${db_name}.ucd"
+  local ucdb_path="${OUTPUT_DIR}/${db_name}.ucdb"
 
   echo "=== collect ==="
   echo "No automatic compile/run collection step is performed by default."
   echo "To collect coverage data:"
-  echo "  make compile_sim VLOG_OPTS='-coverage' VCOM_OPTS='-coverage' VSIM_OPTS='-coverage' \\" 
-  echo "    SIM_DO='coverage save -onexit ${ucd_path}; run -all; quit -f' TEST_NAME=${test_name} run_sim_smoke"
-  echo "The generated ${ucd_path} can then be used with this script's --report mode."
+  echo "  COV_ENABLE=1 UCDB_OUT=${ucdb_path} TEST_NAME=${test_name} make run_sim_smoke"
+  echo "The generated ${ucdb_path} can then be used with this script report mode."
 }
 
 report_db() {
   local db_file="$1"
   local base_file="$(basename "$db_file")"
-  local report_txt="${OUTPUT_DIR}/${base_file%.ucd}.txt"
+  local report_txt="${OUTPUT_DIR}/${base_file%.*}.txt"
+  local vcover_bin
+  local rtl_arg
+  local cvg_arg
 
-  if command -v vcover >/dev/null 2>&1; then
-    echo "=== report ==="
-    echo "Running vcover report on: ${db_file}"
-    vcover report "$db_file" > "$report_txt"
-    echo "Report written to: $report_txt"
-  else
+  if ! vcover_bin="$(find_vcover)"; then
     echo "vcover not available in this environment."
-    echo "Please install ModelSim's vcover utility to generate text/html reports."
+    echo "Set QUESTA_HOME or install Questa to generate coverage reports."
+    return 1
   fi
+  rtl_arg="$(rtl_srcfile_arg)"
+  cvg_arg="$(covg_srcfile_arg)"
+
+  {
+    echo "=== DUT structural coverage (RTL only) ==="
+    echo "Database: ${db_file}"
+    "$vcover_bin" report -summary -code bcesft "$rtl_arg" "$db_file"
+    echo
+    echo "=== Functional coverage (collector) ==="
+    tmp_cvg="$(mktemp)"
+    if "$vcover_bin" report -summary -cvg "$cvg_arg" "$db_file" >"$tmp_cvg" 2>&1; then
+      cat "$tmp_cvg"
+      if grep -q "No matching coverage data found" "$tmp_cvg"; then
+        "$vcover_bin" report -summary -cvg "$db_file"
+      fi
+    else
+      cat "$tmp_cvg"
+      "$vcover_bin" report -summary -cvg "$db_file"
+    fi
+    rm -f "$tmp_cvg"
+  } > "$report_txt"
+  echo "Report written to: $report_txt"
 }
 
 if [ "${1-}" = "--collect" ]; then
@@ -54,13 +111,14 @@ if [ "$#" -gt 0 ] && [ -f "$1" ]; then
   exit 0
 fi
 
-ucd_files=( "$TRANSCRIPT_DIR"/*.ucd )
-if [ "${#ucd_files[@]}" -eq 1 ] && [ ! -e "${ucd_files[0]}" ]; then
-  echo "No .ucd coverage database found in: $TRANSCRIPT_DIR"
-  echo "Use --collect to create one, then rerun coverage_report.sh <path_to_ucd>."
+shopt -s nullglob
+ucdb_files=( "$TRANSCRIPT_DIR"/*.ucdb "$OUTPUT_DIR"/*.ucdb )
+if [ "${#ucdb_files[@]}" -eq 0 ]; then
+  echo "No .ucdb coverage database found in: $TRANSCRIPT_DIR or $OUTPUT_DIR"
+  echo "Use --collect to create one, then rerun coverage_report.sh <path_to_ucdb>."
   exit 1
 fi
 
-for db in "${ucd_files[@]}"; do
+for db in "${ucdb_files[@]}"; do
   report_db "$db"
 done

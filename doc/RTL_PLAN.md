@@ -5,7 +5,7 @@
 **Version:** 26.3.0
 **Baseline:** v26.0.0332 (feb_system_v2 synthesis submodule)
 **Integration Target:** online_dpv2 / fe_scifi / feb_system_v2
-**Companion Documents:** TLM_PLAN.md, DV_PLAN.md, DV_BASIC.md, DV_PERF.md, DV_EDGE.md, DV_ERROR.md, TLM_NOTE.md, ORDERING_GUIDE.md
+**Companion Documents:** TLM_PLAN.md, DV_PLAN.md, DV_BASIC.md, DV_PROF.md, DV_EDGE.md, DV_ERROR.md, TLM_NOTE.md, ORDERING_GUIDE.md
 
 ---
 
@@ -262,7 +262,7 @@ slow-control_hub/
 ├── RTL_PLAN.md                       THIS FILE
 ├── DV_PLAN.md                        DV main entrance (305 tests, 14 presets)
 ├── DV_BASIC.md                       Basic functional tests (T001–T249)
-├── DV_PERF.md                        Performance + stress (T300–T349)
+├── DV_PROF.md                        Performance + stress (T300–T357 implementation aliases)
 ├── DV_EDGE.md                        Edge cases (T400–T449)
 ├── DV_ERROR.md                       Error handling: soft/hard/fatal (T500–T549)
 ├── TLM_PLAN.md                       Python TLM model (63 experiments)
@@ -281,7 +281,7 @@ DV is organized in DV_PLAN.md with 305 test cases across 4 categories:
 | Category | Document | Tests | Method |
 |----------|----------|-------|--------|
 | Basic functional | DV_BASIC.md | T001–T249 (155) | Directed + UVM |
-| Performance | DV_PERF.md | T300–T349 (50) | UVM sweeps |
+| Performance | DV_PROF.md | T300–T357 implementation aliases | UVM sweeps |
 | Edge cases | DV_EDGE.md | T400–T449 (50) | Directed |
 | Error handling | DV_ERROR.md | T500–T549 (50) | Directed |
 

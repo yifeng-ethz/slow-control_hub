@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>sc_hub Wave Reporting</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; max-width: 1100px; }
+    h1, h2 { margin-bottom: 0.4rem; }
+    .grid { display: grid; grid-template-columns: 280px 1fr; gap: 1.5rem; }
+    .card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; }
+    .meta dt { font-weight: 700; }
+    .meta dd { margin: 0 0 0.6rem 0; }
+    pre { white-space: pre-wrap; background: #f7f7f7; padding: 0.75rem; border-radius: 6px; }
+    code { background: #f4f4f4; padding: 0.1rem 0.25rem; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>sc_hub Wave Reporting</h1>
+  <p class="muted">Static browser view over <code>waves/manifest.json</code>.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>Cases</h2>
+      <select id="caseSelect" size="18" style="width:100%"></select>
+    </div>
+    <div class="card">
+      <h2 id="title">No case selected</h2>
+      <dl class="meta" id="meta"></dl>
+      <h3>Artifacts</h3>
+      <ul id="artifacts"></ul>
+      <h3>Markers</h3>
+      <pre id="markers">[]</pre>
+      <h3>Notes</h3>
+      <pre id="notes"></pre>
+    </div>
+  </div>
+  <script>
+    const sel = document.getElementById('caseSelect');
+    const title = document.getElementById('title');
+    const meta = document.getElementById('meta');
+    const artifacts = document.getElementById('artifacts');
+    const markers = document.getElementById('markers');
+    const notes = document.getElementById('notes');
+
+    function addMeta(key, value) {
+      const dt = document.createElement('dt');
+      dt.textContent = key;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      meta.appendChild(dt);
+      meta.appendChild(dd);
+    }
+
+    function renderCase(c) {
+      title.textContent = `${c.case_id} - ${c.title || ''}`.trim();
+      meta.innerHTML = '';
+      artifacts.innerHTML = '';
+      addMeta('kind', c.kind || '');
+      addMeta('group', c.group || '');
+      addMeta('alias', c.alias || '');
+      addMeta('status', c.status || '');
+      addMeta('published_at', c.published_at || '');
+      (c.artifacts || []).forEach((a) => {
+        const li = document.createElement('li');
+        if (a.href) {
+          const link = document.createElement('a');
+          link.href = a.href;
+          link.textContent = `${a.label} (${a.type})`;
+          li.appendChild(link);
+        } else {
+          li.textContent = `${a.label} (${a.type})`;
+        }
+        artifacts.appendChild(li);
+      });
+      markers.textContent = JSON.stringify(c.markers || [], null, 2);
+      notes.textContent = c.notes || '';
+    }
+
+    fetch('manifest.json').then((r) => r.json()).then((manifest) => {
+      (manifest.cases || []).forEach((c, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `${c.case_id} ${c.title || ''}`.trim();
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => renderCase(manifest.cases[Number(sel.value)]));
+      if ((manifest.cases || []).length) {
+        sel.value = '0';
+        renderCase(manifest.cases[0]);
+      }
+    }).catch((err) => {
+      title.textContent = 'Manifest load failed';
+      notes.textContent = String(err);
+    });
+  </script>
+</body>
+</html>

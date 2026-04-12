@@ -1,0 +1,33 @@
+[*] GTKWave Analyzer save file - template
+[dumpfile] REPLACE_WITH_VCD
+[dumpfile_mtime] 0
+[savefile] sc_hub_wave_template.gtkw
+[timestart] 0
+[size] 1600 900
+[pos] -1 -1
+*-1 0
+[treeopen] tb_top.
+@200
+- top-level markers should use T0/T1/T2 naming
+@28
+tb_top.clk
+[color] 0
+@28
+tb_top.rst
+[color] 1
+@200
+- handshake group
+@28
+tb_top.harness.sc_pkt_vif.valid
+[color] 3
+@28
+tb_top.harness.sc_pkt_vif.ready
+[color] 3
+@200
+- command / reply payload group
+@22
+tb_top.harness.sc_pkt_vif.data
+[color] 5
+@22
+tb_top.harness.sc_reply_vif.data
+[color] 5

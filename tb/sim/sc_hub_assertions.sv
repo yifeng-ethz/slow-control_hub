@@ -386,7 +386,9 @@ module sc_hub_assertions (
       end
 
       if (axi4_ar_fire) begin
-        if (write_txn_inflight || read_txn_inflight[axi_arid]) begin
+        if (read_txn_inflight[axi_arid] &&
+            !((axi4_r_fire && axi_rlast && (axi_rid == axi_arid)) ||
+              (axi_rd_done && (axi_rd_done_tag == axi_arid)))) begin
           axi_protocol_violations <= axi_protocol_violations + 1;
         end
         read_beats_remaining[axi_arid] <= {1'b0, axi_arlen} + 9'd1;
@@ -441,14 +443,17 @@ module sc_hub_assertions (
       (axi4_b_fire) |-> write_last_seen;
   endproperty
 
-  property axi4_no_interleave;
+  property axi4_single_write_inflight;
     @(posedge clk) disable iff (rst)
-      axi4_aw_fire |-> !any_read_txn_inflight() && !write_txn_inflight;
+      axi4_aw_fire |-> !write_txn_inflight;
   endproperty
 
   property axi4_no_reuse_arid;
     @(posedge clk) disable iff (rst)
-      axi4_ar_fire |-> !write_txn_inflight && !read_txn_inflight[axi_arid];
+      axi4_ar_fire |->
+        ((!read_txn_inflight[axi_arid]) ||
+         ((axi4_r_fire && axi_rlast && (axi_rid == axi_arid)) ||
+          (axi_rd_done && (axi_rd_done_tag == axi_arid))));
   endproperty
 
   property axi4_no_parallel_aw_ar;
@@ -474,11 +479,11 @@ module sc_hub_assertions (
   assert property (axi4_bvalid_after_wlast)
     else $error("sc_hub_assertions: BVALID seen before final WLAST beat");
 
-  assert property (axi4_no_interleave)
-    else $error("sc_hub_assertions: AW issued while prior transaction is in-flight");
+  assert property (axi4_single_write_inflight)
+    else $error("sc_hub_assertions: AW issued while prior write was still in-flight");
 
   assert property (axi4_no_reuse_arid)
-    else $error("sc_hub_assertions: ARID reused while prior transaction with same ID is in-flight");
+    else $error("sc_hub_assertions: ARID reused before prior read with the same ID completed");
 
   assert property (axi4_no_parallel_aw_ar)
     else $error("sc_hub_assertions: AW and AR issued in same cycle");

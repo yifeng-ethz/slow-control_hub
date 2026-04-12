@@ -1,0 +1,21 @@
+[*] GTKWave Analyzer save file
+[dumpfile] REPLACE_WITH_VCD
+@28
+tb_top.clk
+[color] 0
+@28
+tb_top.rst
+[color] 1
+@200
+- ingress/egress
+@28
+tb_top.harness.sc_pkt_vif.ready
+[color] 3
+@28
+tb_top.harness.sc_reply_vif.valid
+[color] 3
+@200
+- queue/counter placeholders
+@24
+tb_top.harness.env_h.coverage_h.cmd_count
+[color] 4

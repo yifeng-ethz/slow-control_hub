@@ -1,0 +1,22 @@
+[*] GTKWave Analyzer save file
+[dumpfile] REPLACE_WITH_VCD
+@200
+- packet link framing
+@22
+tb_top.harness.sc_pkt_vif.data
+[color] 5
+@22
+tb_top.harness.sc_pkt_vif.datak
+[color] 5
+@28
+tb_top.harness.sc_pkt_vif.ready
+[color] 3
+@22
+tb_top.harness.sc_reply_vif.data
+[color] 5
+@28
+tb_top.harness.sc_reply_vif.valid
+[color] 3
+@28
+tb_top.harness.sc_reply_vif.ready
+[color] 3

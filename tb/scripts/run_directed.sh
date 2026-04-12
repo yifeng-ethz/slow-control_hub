@@ -15,12 +15,15 @@ Usage:
 Examples:
   run_directed.sh smoke_basic
   run_directed.sh T001 T002 T003
+  run_directed.sh B001 E001 X001 P001 CROSS-001
 
 Environment:
   BUS_TYPE         AVMM (default) | AXI4
   VLOG_OPTS        Extra options passed to vlog
   VCOM_OPTS        Extra options passed to vcom
   VSIM_OPTS        Extra options passed to vsim
+  COV_ENABLE       When set to 1, compile/run with code coverage enabled
+  UCDB_OUT         Optional UCDB file saved on exit when COV_ENABLE=1
   SIM_DO           Command passed to vsim -do (default: run -all; quit -f)
 EOF
 }
@@ -40,13 +43,37 @@ pass_count=0
 fail_count=0
 run_count=0
 
+resolve_directed_case_id() {
+  local case_id_raw="$1"
+
+  case "$case_id_raw" in
+    smoke_basic)
+      printf '%s\n' "$case_id_raw"
+      return 0
+      ;;
+  esac
+
+  python3 "$SCRIPT_DIR/resolve_case_alias.py" --allow T,B,E,P,X,CROSS "$case_id_raw"
+}
+
 run_one() {
-  local test_name="$1"
+  local raw_test_name="$1"
+  local test_name
   local log_file
   local run_workspace
   local modelsim_ini
   local work_lib
   local vlog_opts_with_mode
+  local sim_do="${SIM_DO-}"
+  test_name="$(resolve_directed_case_id "$raw_test_name")" || {
+    run_count=$((run_count + 1))
+    fail_count=$((fail_count + 1))
+    printf "%s\n" "----------------------------------------------------------------"
+    printf "[%d] run_sim_smoke TEST_NAME=%s BUS_TYPE=%s\n" "$run_count" "$raw_test_name" "${BUS_TYPE:-AVALON}"
+    echo "[FAIL] ${raw_test_name}"
+    return
+  }
+
   local -a make_args=(
     "TEST_NAME=$test_name"
     "BUS_TYPE=${BUS_TYPE:-AVALON}"
@@ -159,23 +186,29 @@ run_one() {
   if [ -n "${VSIM_OPTS-}" ]; then
     make_args+=("VSIM_OPTS=${VSIM_OPTS}")
   fi
-  if [ -n "${SIM_DO-}" ]; then
-    make_args+=("SIM_DO=${SIM_DO}")
+  if [ "${COV_ENABLE:-0}" = "1" ]; then
+    make_args+=("COV=1")
+    if [ -z "$sim_do" ] && [ -n "${UCDB_OUT-}" ]; then
+      sim_do="coverage save -onexit ${UCDB_OUT}; run -all; quit -f"
+    fi
+  fi
+  if [ -n "$sim_do" ]; then
+    make_args+=("SIM_DO=${sim_do}")
   fi
 
   run_count=$((run_count + 1))
   printf '%s\n' "----------------------------------------------------------------"
-  printf '[%d] run_sim_smoke TEST_NAME=%s BUS_TYPE=%s\n' \
-         "$run_count" "$test_name" "${BUS_TYPE:-AVALON}"
+  printf '[%d] run_sim_smoke TEST_NAME=%s -> %s BUS_TYPE=%s\n' \
+         "$run_count" "$raw_test_name" "$test_name" "${BUS_TYPE:-AVALON}"
 
   case "$test_name" in
-    T123|T124|T125|T126|T127|T128|T3[0-4][0-9]|T350|T351|T352|T353|T354|T355|T356|T357)
-      if "$SCRIPT_DIR/run_uvm_case.sh" "$test_name"; then
+    T123|T124|T125|T126|T127|T128|T3[0-4][0-9]|T350|T351|T352|T353|T354|T355|T356|T357|T358|T359|T360|T361|T362|T363|T364|T365|T366|T367|T368)
+      if "$SCRIPT_DIR/run_uvm_case.sh" "$raw_test_name"; then
         pass_count=$((pass_count + 1))
-        echo "[PASS] ${test_name}"
+        echo "[PASS] ${raw_test_name}"
       else
         fail_count=$((fail_count + 1))
-        echo "[FAIL] ${test_name}"
+        echo "[FAIL] ${raw_test_name}"
       fi
       return
       ;;
@@ -184,10 +217,10 @@ run_one() {
   if [[ "$test_name" == "T548" || "$test_name" == "T549" ]]; then
     if python3 "$SCRIPT_DIR/check_static_cases.py" "$test_name"; then
       pass_count=$((pass_count + 1))
-      echo "[PASS] ${test_name}"
+      echo "[PASS] ${raw_test_name}"
     else
       fail_count=$((fail_count + 1))
-      echo "[FAIL] ${test_name}"
+      echo "[FAIL] ${raw_test_name}"
     fi
     return
   fi
@@ -204,10 +237,10 @@ run_one() {
   if (cd "$TB_DIR" && make run_sim_smoke "${make_args[@]}" 2>&1 | tee "$log_file"); then
     if rg -q '(^# \*\* (Error|Fatal):|unknown TEST_NAME=)' "$log_file"; then
       fail_count=$((fail_count + 1))
-      echo "[FAIL] ${test_name}"
+      echo "[FAIL] ${raw_test_name}"
     else
       pass_count=$((pass_count + 1))
-      echo "[PASS] ${test_name}"
+      echo "[PASS] ${raw_test_name}"
     fi
   else
     fail_count=$((fail_count + 1))

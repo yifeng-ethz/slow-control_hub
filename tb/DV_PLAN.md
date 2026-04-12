@@ -4,8 +4,9 @@
 **Author:** Yifeng Wang
 **Companion:** ../doc/RTL_PLAN.md, ../doc/TLM_PLAN.md, ../doc/TLM_NOTE.md
 **System DV Plan:** `/home/yifeng/packages/online_dpv2/online/fe_board/fe_scifi/tb/scifi_dp/doc/DV_PLAN.md`
-**Simulator:** Questa FSE 2022.4 (local license) or full Questa via ETH floating license (`8161@lic-mentor.ethz.ch`)
-**UVM:** UVM 1.2 bundled with Questa FSE. With ETH license: `rand`, `covergroup`, DPI available.
+**Simulator Goal:** full Mentor Questa with ETH floating license (`8161@lic-mentor.ethz.ch`)  
+**Current Tool Reality:** local tree currently resolves to the Intel-packaged `questa_fse` path; this remains a compliance blocker until a non-FSE toolchain is installed or exposed on the host  
+**UVM:** UVM 1.2
 
 ---
 
@@ -15,17 +16,25 @@ This plan is the **main entrance point** for all sc_hub_v2 DV. Test cases are or
 
 Current implementation snapshot:
 - The tables below allocate the full planned ID space.
-- The checked-in standalone harness now executes directed protocol coverage through `T130` and the promoted UVM case matrix `T123`–`T128` plus `T300`–`T357`.
+- The checked-in standalone harness now executes directed protocol coverage through `T130`, the promoted UVM case matrix `T123`–`T128` plus `T300`–`T368`, and static configuration guard checks beyond the canonical alias overlay.
 - See `implementation-status.md` for the current runnable truth, residual blind spots, and bring-up guidance.
 
-| Document | Scope | Test IDs | Count |
-|----------|-------|----------|-------|
-| [DV_BASIC.md](DV_BASIC.md) | Functional bring-up, protocol correctness, basic feature validation | T001–T094, T095–T104, T200–T249 | 155 |
-| [DV_PERF.md](DV_PERF.md) | Performance scans, stress tests, publication-quality characterization | T300–T349 | 50 |
-| [DV_EDGE.md](DV_EDGE.md) | Near-boundary, non-power-of-2, intentional near-failure without failure | T400–T449 | 50 |
-| [DV_ERROR.md](DV_ERROR.md) | Soft errors (counters), hard errors (reset-recoverable), fatal errors (config-induced unrecoverable) | T500–T549 | 50 |
-| [DV_CROSS.md](DV_CROSS.md) | Long mixed-feature cross cases for promoted regressions | T356–T357 | 2 |
-| **Total** | | | **307** |
+| Document | Scope | Canonical Plan IDs | Current Implementation Alias Space | Count |
+|----------|-------|--------------------|------------------------------------|-------|
+| [DV_BASIC.md](DV_BASIC.md) | Functional bring-up, protocol correctness, basic feature validation | B001–B152 | table-order overlay across T001-T060, T077-T112, T123-T128, T200-T249 | 152 |
+| [DV_PROF.md](DV_PROF.md) | Performance scans, stress tests, publication-quality characterization | P001–P128 | T300–T355 (implemented subset) | 128 |
+| [DV_EDGE.md](DV_EDGE.md) | Near-boundary, non-power-of-2, intentional near-failure without failure | E001–E128 | T400–T449 (implemented subset) | 128 |
+| [DV_ERROR.md](DV_ERROR.md) | Soft errors, hard recoverable failures, configuration-fatal failures | X001–X128 | T500–T549 (implemented subset) | 128 |
+| [DV_CROSS.md](DV_CROSS.md) | Long mixed-feature cross cases for promoted regressions | CROSS-001–CROSS-002 | T356–T357 | 2 |
+| Closure extensions | Additional promoted closure/debug cases beyond the canonical alias overlay | planned-only today | T358–T368 | 11 |
+| **Total** | | | | **538** |
+
+Workflow note:
+
+- the canonical plan space is now `B/E/P/X`
+- the checked-in runnable harness still uses legacy `Txxx` implementation names for the implemented subset
+- canonical IDs that have no `Txxx` alias yet are **planned-only** and intentionally fail in the runners with a `planned but not implemented` message
+- migration therefore proceeds through explicit aliasing instead of pretending the legacy implementation labels are the plan IDs
 
 **ID allocation:**
 - T001–T128: Legacy v1 cases (migrated into DV_BASIC.md and DV_ERROR.md)
@@ -331,7 +340,7 @@ Checked continuously during all tests. Not counted as test cases.
 slow-control_hub/
 +-- DV_PLAN.md                     THIS FILE (main entrance)
 +-- DV_BASIC.md                    Basic functional test cases
-+-- DV_PERF.md                     Performance and stress test cases
++-- DV_PROF.md                     Performance and stress test cases
 +-- DV_EDGE.md                     Edge cases
 +-- DV_ERROR.md                    Error handling test cases (soft/hard/fatal)
 |
@@ -547,12 +556,12 @@ When the ETH license is available, use `covergroup` for coverage and `rand`/`con
 | v2 Atomic Functional (ATM) | DV_BASIC | T220-T229 | 10 | 0 | 10 |
 | v2 Ordering Functional (ORD) | DV_BASIC | T230-T249 | 20 | 0 | 20 |
 | Reset (RST) | DV_BASIC | T105-T112 | 8 | 0 | 8 |
-| Performance Scan (RATE) | DV_PERF | T300-T312 | 0 | 13 | 13 |
-| OoO Speedup (OOOS) | DV_PERF | T313-T319 | 0 | 7 | 7 |
-| Fragmentation Stress (FRAGS) | DV_PERF | T320-T327 | 0 | 8 | 8 |
-| Credit & Priority (CREDP) | DV_PERF | T328-T335 | 0 | 8 | 8 |
-| Ordering Overhead (ORDS) | DV_PERF | T336-T343 | 0 | 8 | 8 |
-| Buffer Sizing (SIZS) | DV_PERF | T344-T349 | 0 | 6 | 6 |
+| Performance Scan (RATE) | DV_PROF | T300-T312 | 0 | 13 | 13 |
+| OoO Speedup (OOOS) | DV_PROF | T313-T319 | 0 | 7 | 7 |
+| Fragmentation Stress (FRAGS) | DV_PROF | T320-T327 | 0 | 8 | 8 |
+| Credit & Priority (CREDP) | DV_PROF | T328-T335 | 0 | 8 | 8 |
+| Ordering Overhead (ORDS) | DV_PROF | T336-T343 | 0 | 8 | 8 |
+| Buffer Sizing (SIZS) | DV_PROF | T344-T349 | 0 | 6 | 6 |
 | Non-Power-of-2 & Boundary (NPO2) | DV_EDGE | T400-T414 | 15 | 0 | 15 |
 | Near-Failure (NF) | DV_EDGE | T415-T429 | 15 | 0 | 15 |
 | Config Boundary (CFG) | DV_EDGE | T430-T449 | 20 | 0 | 20 |
@@ -787,7 +796,7 @@ Estimated total regression: ~56 hours sequential, ~4 hours with 14-way parallel 
 | G3: Coverage | All 16 coverage bins hit for each preset | `compile_time_coverage.sh` |
 | G4: Assertions | Zero assertion failures across all presets | SVA bind module (A01–A37) |
 | G5: Fatal review | All T532–T549 cases run with correct verdict | Manual review per DV_ERROR.md |
-| G6: Performance | RTL throughput within TLM tolerance (section 8 of DV_PERF.md) for production presets | `run_perf.sh` comparison |
+| G6: Performance | RTL throughput within TLM tolerance (section 8 of DV_PROF.md) for production presets | `run_perf.sh` comparison |
 | G7: Free-list | `free_count == RAM_DEPTH` at quiesce for all presets | A37 assertion |
 
 ### 10.8 Test Case Total with Compile-Time Dimension
