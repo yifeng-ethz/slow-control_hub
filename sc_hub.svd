@@ -1,0 +1,707 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<device schemaVersion="1.3" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
+  <vendor>Mu3e</vendor>
+  <vendorID>MU3E</vendorID>
+  <name>MU3E_SC_HUB</name>
+  <series>MU3E_FPGA_IP</series>
+  <version>26.6.1.0411</version>
+  <description>CMSIS-SVD description of the slow-control hub internal CSR window. BaseAddress is 0 because this file describes the relative hub-owned register window; system integration supplies the live slave base address.</description>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <size>32</size>
+  <access>read-write</access>
+  <resetValue>0x00000000</resetValue>
+  <resetMask>0xFFFFFFFF</resetMask>
+  <peripherals>
+    <peripheral>
+      <name>SC_HUB_INTERNAL_CSR</name>
+      <description>Relative internal CSR aperture for the slow-control hub. The window spans 32 words; registers not listed in this file are reserved holes.</description>
+      <groupName>MU3E_SC_HUB</groupName>
+      <baseAddress>0x0</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x80</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <registers>
+        <register>
+          <name>UID</name>
+          <description>Immutable Mu3e IP identifier. Default ASCII &quot;SCHB&quot;.</description>
+          <addressOffset>0x00</addressOffset>
+          <access>read-only</access>
+          <resetValue>0x53434842</resetValue>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Compile-time or integration-time UID word. Default ASCII &quot;SCHB&quot;.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>META</name>
+          <description>Read-multiplexed metadata word. Write page_sel[1:0] before reading back: 0=VERSION, 1=DATE, 2=GIT, 3=INSTANCE_ID.</description>
+          <addressOffset>0x04</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>page_sel</name>
+              <description>Selects the META readback page.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>30</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>Enable, diagnostic clear, and software-reset control word.</description>
+          <addressOffset>0x08</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>enable</name>
+              <description>Global enable for packet execution.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>diag_clear</name>
+              <description>Clears software-visible counters and sticky diagnostics.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>soft_reset</name>
+              <description>Requests a local soft-reset pulse.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToSet</modifiedWriteValues>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>29</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>Busy/error summary and FIFO/bus state.</description>
+          <addressOffset>0x0C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>busy</name>
+              <description>Core FSM is not idle.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>error</name>
+              <description>Error summary derived from ERR_FLAGS.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>dl_fifo_full</name>
+              <description>Download FIFO full.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>bp_full</name>
+              <description>Reply/backpressure FIFO full.</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>enable_state</name>
+              <description>Current latched enable state.</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>bus_busy</name>
+              <description>External bus handler is busy.</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>26</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ERR_FLAGS</name>
+          <description>Sticky overflow, timeout, packet-drop, and bus error flags.</description>
+          <addressOffset>0x10</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>up_overflow</name>
+              <description>Upload/backpressure FIFO overflow observed.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>down_overflow</name>
+              <description>Download ingress FIFO overflow observed.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>int_addr_err</name>
+              <description>Internal CSR access targeted an unmapped word.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>rd_timeout</name>
+              <description>External read timed out.</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>pkt_drop</name>
+              <description>Malformed or truncated packet was dropped before execution.</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>slverr</name>
+              <description>Slave error returned by the external bus.</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>decerr</name>
+              <description>Decode error returned by the external bus.</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+              <modifiedWriteValues>oneToClear</modifiedWriteValues>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>25</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ERR_COUNT</name>
+          <description>Saturating 32-bit error counter.</description>
+          <addressOffset>0x14</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Accumulated error count.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SCRATCH</name>
+          <description>General-purpose software scratch register.</description>
+          <addressOffset>0x18</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Scratch value.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GTS_SNAP_LO</name>
+          <description>Global-timestamp snapshot low word.</description>
+          <addressOffset>0x1C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Low 32 bits of the captured timestamp.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GTS_SNAP_HI</name>
+          <description>Global-timestamp snapshot high word. Reading this register captures a fresh snapshot.</description>
+          <addressOffset>0x20</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>High 32 bits of the captured timestamp.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FIFO_CFG</name>
+          <description>Backpressure and store-and-forward configuration summary.</description>
+          <addressOffset>0x24</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>backpressure_on</name>
+              <description>Reply FIFO/backpressure path present in this build.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>store_forward</name>
+              <description>Write packets are validated before any external side effect.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>30</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FIFO_STATUS</name>
+          <description>Download, reply, and read-data FIFO state summary.</description>
+          <addressOffset>0x28</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>dl_full</name>
+              <description>Download FIFO full.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>bp_full</name>
+              <description>Reply/backpressure FIFO full.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>dl_overflow</name>
+              <description>Download FIFO overflow sticky summary.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>bp_overflow</name>
+              <description>Reply/backpressure FIFO overflow sticky summary.</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>rd_fifo_full</name>
+              <description>Read-data staging FIFO full.</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>rd_fifo_empty</name>
+              <description>Read-data staging FIFO empty.</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>26</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DOWN_PKT_CNT</name>
+          <description>Download packet occupancy summary bit.</description>
+          <addressOffset>0x2C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Raw download packet occupancy summary word.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>UP_PKT_CNT</name>
+          <description>Reply FIFO packet count.</description>
+          <addressOffset>0x30</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Reply FIFO packet count.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DOWN_USEDW</name>
+          <description>Download FIFO used words.</description>
+          <addressOffset>0x34</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Download FIFO occupancy in words.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>UP_USEDW</name>
+          <description>Reply FIFO used words.</description>
+          <addressOffset>0x38</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Reply FIFO occupancy in words.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EXT_PKT_RD</name>
+          <description>External read packet counter.</description>
+          <addressOffset>0x3C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of external read packets.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EXT_PKT_WR</name>
+          <description>External write packet counter.</description>
+          <addressOffset>0x40</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of external write packets.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EXT_WORD_RD</name>
+          <description>External read word counter.</description>
+          <addressOffset>0x44</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of external read data words.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EXT_WORD_WR</name>
+          <description>External write word counter.</description>
+          <addressOffset>0x48</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of external write data words.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LAST_RD_ADDR</name>
+          <description>Last external read address.</description>
+          <addressOffset>0x4C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Most recent external read address word.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LAST_RD_DATA</name>
+          <description>Last external read data.</description>
+          <addressOffset>0x50</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Most recent external read data word.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LAST_WR_ADDR</name>
+          <description>Last external write address.</description>
+          <addressOffset>0x54</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Most recent external write address word.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LAST_WR_DATA</name>
+          <description>Last external write data.</description>
+          <addressOffset>0x58</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Most recent external write data word.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PKT_DROP_CNT</name>
+          <description>Malformed-packet drop counter.</description>
+          <addressOffset>0x5C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of dropped malformed packets.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>OOO_CTRL</name>
+          <description>Runtime out-of-order enable request. Only effective when OOO support is synthesized.</description>
+          <addressOffset>0x60</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>ooo_runtime_enable</name>
+              <description>Runtime request to enable out-of-order completion.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>31</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ORD_DRAIN_CNT</name>
+          <description>Release-drain event counter.</description>
+          <addressOffset>0x64</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of release-drain events.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ORD_HOLD_CNT</name>
+          <description>Acquire-hold event counter.</description>
+          <addressOffset>0x68</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Count of acquire-hold events.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DBG_DROP_DETAIL</name>
+          <description>Last dropped-packet debug detail word.</description>
+          <addressOffset>0x6C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>value</name>
+              <description>Raw debug detail for the last packet drop.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FEB_TYPE</name>
+          <description>Local detector-class selector used by M/S/T packet masking: 0=ALL, 1=MUPIX, 2=SCIFI, 3=TILE.</description>
+          <addressOffset>0x70</addressOffset>
+          <access>read-write</access>
+          <fields>
+            <field>
+              <name>feb_type</name>
+              <description>Local detector class selector.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>30</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>HUB_CAP</name>
+          <description>Compile-time capability bits and identity-header presence.</description>
+          <addressOffset>0x7C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field>
+              <name>ooo_capable</name>
+              <description>Compile-time out-of-order support synthesized.</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>ordering_capable</name>
+              <description>Compile-time acquire/release ordering tracker synthesized.</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>atomic_capable</name>
+              <description>Compile-time atomic read-modify-write support synthesized.</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>identity_header</name>
+              <description>Common Mu3e UID + META identity header implemented at words 0x00 and 0x01.</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>reserved</name>
+              <description>Reserved, read as zero.</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>28</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>
