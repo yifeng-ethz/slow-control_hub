@@ -4,7 +4,7 @@
 from the SWB downlink, executes Avalon-MM or AXI4 transactions on the FEB, and
 emits packetized replies on the uplink.
 
-**Version:** 26.6.1.0411
+**Version:** 26.6.9.0414
 **RTL tops:** `rtl/sc_hub_top.vhd` (Avalon-MM), `rtl/sc_hub_top_axi4.vhd` (AXI4)
 **Platform Designer group:** Mu3e Control Plane/Modules
 

@@ -1,10 +1,11 @@
 -- File name: sc_hub_top_axi4.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.6.1
--- Date    : 20260411
--- Change  : Release-align the AXI4 wrapper to v26.6.1 and keep the exported
---           identity defaults consistent with the documented protocol support.
+-- Version : 26.6.9
+-- Date    : 20260414
+-- Change  : Release-align the AXI4 wrapper to v26.6.9 so the exported
+--           identity defaults match the packaged release metadata used by the
+--           shared CSR/meta readback tests.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -31,9 +32,9 @@ entity sc_hub_top_axi4 is
         IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR              : natural := 26;
         VERSION_MINOR              : natural := 6;
-        VERSION_PATCH              : natural := 1;
-        BUILD                      : natural := 16#0411#;
-        VERSION_DATE               : natural := 16#20260411#;
+        VERSION_PATCH              : natural := 9;
+        BUILD                      : natural := 16#0414#;
+        VERSION_DATE               : natural := 16#20260414#;
         VERSION_GIT                : natural := 0;
         INSTANCE_ID                : natural := 0
     );

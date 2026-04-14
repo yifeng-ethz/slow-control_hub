@@ -4,7 +4,7 @@
   <vendorID>MU3E</vendorID>
   <name>MU3E_SC_HUB</name>
   <series>MU3E_FPGA_IP</series>
-  <version>26.6.1.0411</version>
+  <version>26.6.9.0414</version>
   <description>CMSIS-SVD description of the slow-control hub internal CSR window. BaseAddress is 0 because this file describes the relative hub-owned register window; system integration supplies the live slave base address.</description>
   <addressUnitBits>8</addressUnitBits>
   <width>32</width>

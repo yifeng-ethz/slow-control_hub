@@ -1,5 +1,29 @@
 # Changelog
 
+## 26.6.9.0414
+
+- **RTL**: `sc_hub_avmm_handler` now accepts writes with a dedicated address cursor plus remaining-beat counter, so the same-cycle `waitrequest=0` acceptance case is preserved without timing the accepted-beat bookkeeping through `words_seen`. `sc_hub_core` now borrows the internal-read "last fill" decision into a register one cycle before `INT_RD_PUSHING`, and `sc_hub_pkt_rx` now carries a registered `length==1` flag into `WAITING_WRITE_SPACE` and commit handling instead of re-comparing the live header length in the critical cycle. The AVMM and AXI4 top/core identity defaults are also aligned to `26.6.9.0414` so CSR/meta readback matches the packaged release version.
+- **Verification**: reran the directed standalone AVMM regression (`smoke_basic`, `T081`, `T082`, `T106`, `T112`, `T129`, `T130`, `T517`, `T519`) and reran the standalone Quartus signoff harness. The packaged AVMM top closes again at the `5.818 ns` target with positive setup slack after the control-path borrow fixes.
+
+## 26.6.8.0414
+
+- **RTL**: `sc_hub_pkt_rx` now keeps registered `pkt_is_read` / `pkt_has_download_words` state alongside `pkt_info_work` instead of re-decoding those booleans from the live `sc_type` fanout in the enqueue cycle. Function stays unchanged, but the enqueue-stage timing cone is shorter and no longer leaves the standalone signoff marginal after the `26.6.7.0414` control-path staging changes.
+- **Verification**: reran the directed standalone AVMM regression (`smoke_basic`, `T081`, `T082`, `T106`, `T112`, `T129`, `T130`, `T517`, `T519`) and reran the standalone Quartus signoff harness. The packaged AVMM top now closes again at the `5.818 ns` target with positive setup slack.
+
+## 26.6.7.0414
+
+- **RTL**: `sc_hub_avmm_handler` now captures each accepted external write beat into a registered `{pulse,address,data}` snapshot and `sc_hub_core` consumes that staged snapshot for `ext_write_diag_*` bookkeeping on the following cycle. This preserves the same write-side handshake semantics, including the same-cycle slave-accept case, but removes the long `i_bus_wr_data_ready -> router/limiter -> ext_write_diag_data_hold[*]` timing cone that dominated the integrated FEB `transceiver_pll_clock[0]` closure run.
+- **Verification**: rerun the directed standalone AVMM regression after the write-diagnostic staging change and rerun the standalone Quartus signoff harness before reintegrating into FEB.
+
+## 26.6.6.0414
+
+- **RTL**: `sc_hub_avmm_handler` now uses a one-entry staged-read accept path in `LAUNCHING_READ` instead of driving `timeout_counter` and next-state decisions directly from the live `avm_hub_waitrequest` feedback cone. `avm_hub_read` stays combinational so a slave that already has `waitrequest=0` can still accept the command in the launch cycle, but the accepted launch and any same-cycle `readdatavalid` beat are borrowed into local staging registers and consumed on the following cycle. This removes the live `LAUNCHING_READ -> interconnect waitrequest -> timeout_counter/state` timing cone that was limiting the integrated FEB `transceiver_pll_clock[0]` path without dropping the zero-cycle accept contract.
+- **Verification**: directed standalone AVMM regression rerun on the staged handler with `smoke_basic`, `T081`, `T082`, `T106`, `T112`, `T129`, `T130`, `T517`, and `T519`.
+
+## 26.6.5.0414
+
+- superseded by `26.6.6.0414` before release. The first attempt registered the launch pulse itself, which removed timing pressure but broke nonincrementing zero-latency read behavior by losing the immediate reissue contract when the slave accepted in the same cycle.
+
 ## 26.6.4.0412
 
 - **RTL**: `sc_hub_pkt_rx` version bumped to `26.2.31`. The `WAITING_WRITE_SPACE` state now treats a held-stable repeat of the already-latched payload word as a no-op instead of a drop (added `elsif (i_download_data = waiting_word_data and i_download_datak = waiting_word_datak) then null;` branch). The code for the behaviour described under `26.6.2.0412` was drafted but never committed; this release commits the actual `sc_hub_pkt_rx.vhd` diff so the 17 retry cases (`T123 T301 T302 T303 T304 T317 T320 T321 T323 T326 T327 T337 T344 T345 T347 T350 T352`) are reproducible from `git checkout 26.6.4.0412`.

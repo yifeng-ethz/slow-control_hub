@@ -1,10 +1,13 @@
 -- File name: sc_hub_top.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.6.1
--- Date    : 20260411
--- Change  : Release-align the AVMM wrapper to v26.6.1 and keep the exported
---           identity defaults consistent with the documented protocol support.
+-- Version : 26.6.9
+-- Date    : 20260414
+-- Change  : Package the AVMM top as v26.6.9 after the write-accept staging
+--           and follow-up core/pkt_rx reply-path borrow fixes. Keep the
+--           exported identity generics aligned with the packaged 26.6.9.0414
+--           release so internal CSR/meta readback matches the documented
+--           version.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -34,9 +37,9 @@ entity sc_hub_top is
         IP_UID                     : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR              : natural := 26;
         VERSION_MINOR              : natural := 6;
-        VERSION_PATCH              : natural := 1;
-        BUILD                      : natural := 16#0411#;
-        VERSION_DATE               : natural := 16#20260411#;
+        VERSION_PATCH              : natural := 9;
+        BUILD                      : natural := 16#0414#;
+        VERSION_DATE               : natural := 16#20260414#;
         VERSION_GIT                : natural := 0;
         INSTANCE_ID                : natural := 0
     );
@@ -118,6 +121,9 @@ architecture rtl of sc_hub_top is
     signal bus_wr_data_valid       : std_logic;
     signal bus_wr_data             : std_logic_vector(31 downto 0);
     signal bus_wr_data_ready       : std_logic;
+    signal bus_wr_accept_pulse     : std_logic;
+    signal bus_wr_accept_address   : std_logic_vector(17 downto 0);
+    signal bus_wr_accept_data      : std_logic_vector(31 downto 0);
     signal bus_rd_data_valid       : std_logic;
     signal bus_rd_data             : std_logic_vector(31 downto 0);
     signal bus_done                : std_logic;
@@ -297,6 +303,9 @@ begin
         o_bus_wr_data_valid      => bus_wr_data_valid,
         o_bus_wr_data            => bus_wr_data,
         i_bus_wr_data_ready      => bus_wr_data_ready,
+        i_bus_wr_accept_pulse    => bus_wr_accept_pulse,
+        i_bus_wr_accept_address  => bus_wr_accept_address,
+        i_bus_wr_accept_data     => bus_wr_accept_data,
         i_bus_rd_data_valid      => bus_rd_data_valid,
         i_bus_rd_data            => bus_rd_data,
         i_bus_done               => bus_done,
@@ -329,6 +338,9 @@ begin
         i_wr_data_valid         => bus_wr_data_valid,
         i_wr_data               => bus_wr_data,
         o_wr_data_ready         => bus_wr_data_ready,
+        o_wr_accept_pulse       => bus_wr_accept_pulse,
+        o_wr_accept_address     => bus_wr_accept_address,
+        o_wr_accept_data        => bus_wr_accept_data,
         o_rd_data_valid         => bus_rd_data_valid,
         o_rd_data               => bus_rd_data,
         o_rd_data_last          => open,

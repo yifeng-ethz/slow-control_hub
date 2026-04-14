@@ -1,6 +1,6 @@
 # ============================================================================
-# sc_hub "Slow Control Hub" v26.6.4.0412
-# Yifeng Wang 2026.04.12
+# sc_hub "Slow Control Hub" v26.6.9.0414
+# Yifeng Wang 2026.04.14
 #
 # Compatibility-facing Platform Designer wrapper around the canonical sc_hub v2
 # Avalon-MM top-level.
@@ -13,9 +13,9 @@ set sc_hub_hw_dir [file dirname [file normalize [info script]]]
 set SC_HUB_IP_UID_DEFAULT_CONST        [expr {0x53434842}] ;# ASCII "SCHB"
 set SC_HUB_VERSION_MAJOR_DEFAULT_CONST 26
 set SC_HUB_VERSION_MINOR_DEFAULT_CONST 6
-set SC_HUB_VERSION_PATCH_DEFAULT_CONST 4
-set SC_HUB_BUILD_DEFAULT_CONST         412
-set SC_HUB_VERSION_DATE_DEFAULT_CONST  20260412
+set SC_HUB_VERSION_PATCH_DEFAULT_CONST 9
+set SC_HUB_BUILD_DEFAULT_CONST         414
+set SC_HUB_VERSION_DATE_DEFAULT_CONST  20260414
 set SC_HUB_VERSION_GIT_DEFAULT_CONST   0
 set SC_HUB_INSTANCE_ID_DEFAULT_CONST   0
 
@@ -29,7 +29,7 @@ if {![catch {
 
 set_module_property NAME sc_hub
 set_module_property DISPLAY_NAME "Slow Control Hub Mu3E IP"
-set_module_property VERSION 26.6.4.0412
+set_module_property VERSION 26.6.9.0414
 set_module_property DESCRIPTION "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP "Mu3e Control Plane/Modules"
 set_module_property AUTHOR "Yifeng Wang"

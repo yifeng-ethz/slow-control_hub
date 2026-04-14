@@ -1,11 +1,16 @@
 -- File name: sc_hub_avmm_handler.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.2
--- Date    : 20260402
--- Change  : Keep the bounded timeout counter and capture zero-latency read
---           data in the launch cycle so same-cycle readdatavalid does not
---           fall through the timeout path.
+-- Version : 26.2.6
+-- Date    : 20260414
+-- Change  : Stage accepted AVMM read launches so the LAUNCHING_READ state no
+--           longer closes timing through the live interconnect waitrequest
+--           feedback while preserving zero-cycle acceptance when the slave
+--           drops waitrequest in the launch cycle. Also stage accepted write
+--           beat diagnostics locally and move write address/remaining-beat
+--           tracking onto dedicated registers so the same-cycle accept path
+--           no longer closes timing through words_seen and the write router
+--           cone.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -32,6 +37,9 @@ entity sc_hub_avmm_handler is
         i_wr_data_valid     : in  std_logic;
         i_wr_data           : in  std_logic_vector(31 downto 0);
         o_wr_data_ready     : out std_logic;
+        o_wr_accept_pulse   : out std_logic;
+        o_wr_accept_address : out std_logic_vector(17 downto 0);
+        o_wr_accept_data    : out std_logic_vector(31 downto 0);
         o_rd_data_valid     : out std_logic;
         o_rd_data           : out std_logic_vector(31 downto 0);
         o_rd_data_last      : out std_logic;
@@ -75,13 +83,26 @@ architecture rtl of sc_hub_avmm_handler is
     signal cmd_nonincrement_reg : std_logic := '0';
     signal cmd_length_reg      : unsigned(15 downto 0) := (others => '0');
     signal words_seen          : unsigned(15 downto 0) := (others => '0');
+    signal wr_addr_cursor_reg  : std_logic_vector(17 downto 0) := (others => '0');
+    signal wr_words_remaining_reg : unsigned(15 downto 0) := (others => '0');
     signal timeout_counter     : timeout_counter_t := 0;
     signal response_reg        : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
+    signal launch_stage_valid  : std_logic := '0';
+    signal launch_stage_data_valid : std_logic := '0';
+    signal launch_stage_data_reg : std_logic_vector(31 downto 0) := (others => '0');
+    signal launch_stage_response_reg : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
+    signal launch_reissue_read : std_logic;
+    signal launch_read_comb    : std_logic;
+    signal launch_accept_comb  : std_logic;
+    signal write_accept_comb   : std_logic;
     signal rd_data_valid_pulse : std_logic := '0';
     signal rd_data_reg         : std_logic_vector(31 downto 0) := (others => '0');
     signal rd_data_last_pulse  : std_logic := '0';
     signal done_pulse          : std_logic := '0';
     signal timeout_pulse       : std_logic := '0';
+    signal wr_accept_pulse     : std_logic := '0';
+    signal wr_accept_address_reg : std_logic_vector(17 downto 0) := (others => '0');
+    signal wr_accept_data_reg  : std_logic_vector(31 downto 0) := (others => '0');
 begin
     avm_hub_address    <= cmd_address_reg;
     avm_hub_burstcount <= std_logic_vector(to_unsigned(1, avm_hub_burstcount'length))
@@ -89,11 +110,36 @@ begin
         else std_logic_vector(resize(cmd_length_reg(8 downto 0), avm_hub_burstcount'length));
     avm_hub_writedata  <= i_wr_data;
 
-    avm_hub_read  <= '1' when (avmm_state = LAUNCHING_READ) else '0';
+    -- Keep the launch pulse combinational, but only let the staged acceptance
+    -- result drive the next state/timeout logic on the following cycle.
+    launch_reissue_read <= '1' when (
+        avmm_state = LAUNCHING_READ and
+        launch_stage_valid = '1' and
+        launch_stage_data_valid = '1' and
+        cmd_nonincrement_reg = '1' and
+        (words_seen + to_unsigned(1, words_seen'length) < cmd_length_reg)
+    ) else '0';
+    launch_read_comb <= '1' when (
+        avmm_state = LAUNCHING_READ and
+        (launch_stage_valid = '0' or launch_reissue_read = '1')
+    ) else '0';
+    launch_accept_comb <= '1' when (
+        launch_read_comb = '1' and avm_hub_waitrequest = '0'
+    ) else '0';
+    write_accept_comb <= '1' when (
+        avmm_state = WRITING_DATA and
+        i_wr_data_valid = '1' and
+        avm_hub_waitrequest = '0'
+    ) else '0';
+
+    avm_hub_read  <= launch_read_comb;
     avm_hub_write <= '1' when (avmm_state = WRITING_DATA and i_wr_data_valid = '1') else '0';
 
     o_cmd_ready     <= '1' when (avmm_state = IDLING) else '0';
     o_wr_data_ready <= '1' when (avmm_state = WRITING_DATA and avm_hub_waitrequest = '0') else '0';
+    o_wr_accept_pulse <= wr_accept_pulse;
+    o_wr_accept_address <= wr_accept_address_reg;
+    o_wr_accept_data <= wr_accept_data_reg;
     o_rd_data_valid <= rd_data_valid_pulse;
     o_rd_data       <= rd_data_reg;
     o_rd_data_last  <= rd_data_last_pulse;
@@ -111,27 +157,43 @@ begin
                 cmd_nonincrement_reg <= '0';
                 cmd_length_reg      <= (others => '0');
                 words_seen          <= (others => '0');
+                wr_addr_cursor_reg  <= (others => '0');
+                wr_words_remaining_reg <= (others => '0');
                 timeout_counter     <= 0;
                 response_reg        <= SC_RSP_OK_CONST;
+                launch_stage_valid  <= '0';
+                launch_stage_data_valid <= '0';
+                launch_stage_data_reg <= (others => '0');
+                launch_stage_response_reg <= SC_RSP_OK_CONST;
                 rd_data_valid_pulse <= '0';
                 rd_data_reg         <= (others => '0');
                 rd_data_last_pulse  <= '0';
                 done_pulse          <= '0';
                 timeout_pulse       <= '0';
+                wr_accept_pulse     <= '0';
+                wr_accept_address_reg <= (others => '0');
+                wr_accept_data_reg  <= (others => '0');
             else
                 rd_data_valid_pulse <= '0';
                 rd_data_last_pulse  <= '0';
                 done_pulse          <= '0';
                 timeout_pulse       <= '0';
+                wr_accept_pulse     <= '0';
 
                 case avmm_state is
                     when IDLING =>
                         timeout_counter <= 0;
                         words_seen      <= (others => '0');
+                        wr_addr_cursor_reg <= (others => '0');
+                        wr_words_remaining_reg <= (others => '0');
+                        launch_stage_valid <= '0';
+                        launch_stage_data_valid <= '0';
                         if (i_cmd_valid = '1') then
                             cmd_address_reg <= i_cmd_address;
                             cmd_nonincrement_reg <= i_cmd_nonincrement;
                             cmd_length_reg  <= unsigned(i_cmd_length);
+                            wr_addr_cursor_reg <= i_cmd_address;
+                            wr_words_remaining_reg <= unsigned(i_cmd_length);
                             response_reg    <= SC_RSP_OK_CONST;
                             if (i_cmd_is_read = '1') then
                                 avmm_state <= LAUNCHING_READ;
@@ -141,26 +203,29 @@ begin
                         end if;
 
                     when LAUNCHING_READ =>
-                        if (avm_hub_waitrequest = '0') then
-                            timeout_counter <= 0;
-                            if (avm_hub_readdatavalid = '1') then
+                        timeout_counter <= 0;
+                        if (launch_stage_valid = '1') then
+                            launch_stage_valid <= '0';
+                            launch_stage_data_valid <= '0';
+
+                            if (launch_stage_data_valid = '1') then
                                 rd_data_valid_pulse <= '1';
 
-                                if (avm_hub_response = SC_RSP_SLVERR_CONST) then
+                                if (launch_stage_response_reg = SC_RSP_SLVERR_CONST) then
                                     rd_data_reg  <= x"BBADBEEF";
-                                    response_reg <= avm_hub_response;
-                                elsif (avm_hub_response = SC_RSP_DECERR_CONST) then
+                                    response_reg <= launch_stage_response_reg;
+                                elsif (launch_stage_response_reg = SC_RSP_DECERR_CONST) then
                                     rd_data_reg  <= x"DEADBEEF";
-                                    response_reg <= avm_hub_response;
+                                    response_reg <= launch_stage_response_reg;
                                 else
-                                    rd_data_reg <= avm_hub_readdata;
+                                    rd_data_reg <= launch_stage_data_reg;
                                 end if;
 
-                                if (avm_hub_response /= SC_RSP_OK_CONST) then
-                                    response_reg <= avm_hub_response;
+                                if (launch_stage_response_reg /= SC_RSP_OK_CONST) then
+                                    response_reg <= launch_stage_response_reg;
                                 end if;
 
-                                if (cmd_length_reg <= to_unsigned(1, cmd_length_reg'length)) then
+                                if (words_seen + to_unsigned(1, words_seen'length) >= cmd_length_reg) then
                                     rd_data_last_pulse <= '1';
                                     done_pulse         <= '1';
                                     avmm_state         <= IDLING;
@@ -170,10 +235,17 @@ begin
                                     avmm_state <= READING_DATA;
                                 end if;
 
-                                words_seen <= to_unsigned(1, words_seen'length);
+                                words_seen <= words_seen + to_unsigned(1, words_seen'length);
                             else
                                 avmm_state <= READING_DATA;
                             end if;
+                        end if;
+
+                        if (launch_accept_comb = '1') then
+                            launch_stage_valid <= '1';
+                            launch_stage_data_valid <= avm_hub_readdatavalid;
+                            launch_stage_data_reg <= avm_hub_readdata;
+                            launch_stage_response_reg <= avm_hub_response;
                         end if;
 
                     when READING_DATA =>
@@ -215,12 +287,26 @@ begin
                         end if;
 
                     when WRITING_DATA =>
-                        if (i_wr_data_valid = '1' and avm_hub_waitrequest = '0') then
-                            if (cmd_nonincrement_reg = '1' or words_seen + 1 >= cmd_length_reg) then
+                        if (write_accept_comb = '1') then
+                            wr_accept_pulse <= '1';
+                            wr_accept_data_reg <= i_wr_data;
+                            wr_accept_address_reg <= wr_addr_cursor_reg;
+
+                            if (cmd_nonincrement_reg = '0') then
+                                wr_addr_cursor_reg <= std_logic_vector(unsigned(wr_addr_cursor_reg) + 1);
+                            end if;
+
+                            if (wr_words_remaining_reg > 0) then
+                                wr_words_remaining_reg <= wr_words_remaining_reg - 1;
+                            end if;
+
+                            if (
+                                cmd_nonincrement_reg = '1' or
+                                wr_words_remaining_reg <= to_unsigned(1, wr_words_remaining_reg'length)
+                            ) then
                                 timeout_counter <= 0;
                                 avmm_state      <= WAITING_WRITE_RSP;
                             end if;
-                            words_seen <= words_seen + 1;
                         end if;
 
                     when WAITING_WRITE_RSP =>
@@ -228,7 +314,7 @@ begin
                             if (avm_hub_response /= SC_RSP_OK_CONST) then
                                 response_reg <= avm_hub_response;
                             end if;
-                            if (cmd_nonincrement_reg = '1' and words_seen < cmd_length_reg) then
+                            if (cmd_nonincrement_reg = '1' and wr_words_remaining_reg > 0) then
                                 timeout_counter <= 0;
                                 avmm_state      <= WRITING_DATA;
                             else

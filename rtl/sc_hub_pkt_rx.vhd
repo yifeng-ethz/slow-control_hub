@@ -1,6 +1,14 @@
 -- File name: sc_hub_pkt_rx.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
+-- Version : 26.2.32
+-- Date    : 20260414
+-- Change  : Register the packet-type decode (`pkt_is_read` /
+--           `pkt_has_download_words`) alongside the packet header so the
+--           enqueue-stage control no longer closes through the live
+--           `pkt_info_work.sc_type` fanout. Function stays unchanged; this
+--           only shortens the enqueue timing cone.
+-- =======================================
 -- Version : 26.2.31
 -- Date    : 20260412
 -- Change  : WAITING_WRITE_SPACE now treats a held-stable repeat of the
@@ -146,6 +154,9 @@ architecture rtl of sc_hub_pkt_rx is
     signal payload_space_granted : std_logic := '0';
     signal payload_space_ready   : std_logic := '1';
     signal pkt_info_is_internal  : std_logic := '0';
+    signal pkt_is_read_reg       : std_logic := '1';
+    signal pkt_len_is_one_reg    : std_logic := '0';
+    signal pkt_has_download_words_reg : std_logic := '0';
     signal waiting_word_valid   : std_logic := '0';
     signal waiting_word_data    : std_logic_vector(31 downto 0) := (others => '0');
     signal waiting_word_datak   : std_logic_vector(3 downto 0) := (others => '0');
@@ -415,6 +426,9 @@ begin
                 trailer_wait_committed     <= '0';
                 payload_check_words        <= 0;
                 pkt_info_is_internal       <= '0';
+                pkt_is_read_reg            <= '1';
+                pkt_len_is_one_reg         <= '0';
+                pkt_has_download_words_reg <= '0';
                 waiting_word_valid       <= '0';
                 waiting_word_data        <= (others => '0');
                 waiting_word_datak       <= (others => '0');
@@ -454,7 +468,7 @@ begin
                 is_preamble_v        := is_sc_preamble_func(i_download_data, i_download_datak);
                 is_trailer_v         := is_trailer_func(i_download_data, i_download_datak);
                 is_idle_v            := is_idle_func(i_download_data, i_download_datak);
-                has_download_words_v := pkt_has_download_words_func(pkt_info_work);
+                has_download_words_v := (pkt_has_download_words_reg = '1');
                 drop_packet_v        := false;
                 commit_packet_v      := false;
 
@@ -506,7 +520,7 @@ begin
 
                 if (rx_state /= IDLING and is_preamble_v = true and i_accept_new_pkt = '1') then
                     debug_restart_count <= sat_inc32_func(debug_restart_count);
-                    if (pkt_has_download_words_func(pkt_info_work)) then
+                    if (pkt_has_download_words_reg = '1') then
                         fifo_rollback  <= '1';
                         pkt_drop_pulse <= '1';
                         pkt_drop_count <= sat_inc16_func(pkt_drop_count);
@@ -527,6 +541,8 @@ begin
                     pkt_info_work.atomic_flag    <= '0';
                     pkt_info_work.atomic_mask    <= (others => '0');
                     pkt_info_work.atomic_data    <= (others => '0');
+                    pkt_is_read_reg             <= not i_download_data(24);
+                    pkt_has_download_words_reg  <= i_download_data(24);
                     fifo_capture_start           <= '1';
                     write_words_seen            <= 0;
                     payload_check_words         <= 0;
@@ -552,6 +568,8 @@ begin
                                 pkt_info_work.atomic_flag   <= '0';
                                 pkt_info_work.atomic_mask   <= (others => '0');
                                 pkt_info_work.atomic_data   <= (others => '0');
+                                pkt_is_read_reg             <= not i_download_data(24);
+                                pkt_has_download_words_reg  <= i_download_data(24);
                                 fifo_capture_start          <= '1';
                                 payload_check_words         <= 0;
                                 pkt_info_is_internal        <= '0';
@@ -580,6 +598,7 @@ begin
                                     pkt_info_work.mask_s        <= i_download_data(26);
                                     pkt_info_work.mask_t        <= i_download_data(25);
                                     pkt_info_work.mask_r        <= i_download_data(24);
+                                    pkt_has_download_words_reg  <= (not pkt_is_read_reg) or i_download_data(28);
                                     if (addr_is_internal_func(i_download_data(23 downto 0))) then
                                         pkt_info_is_internal <= '1';
                                     else
@@ -601,6 +620,11 @@ begin
                                 pkt_info_work.rw_length    <= i_download_data(15 downto 0);
                                 pkt_info_work.order_domain <= i_download_data(31 downto 28);
                                 pkt_info_work.order_epoch  <= i_download_data(27 downto 20);
+                                if (unsigned(i_download_data(15 downto 0)) = 1) then
+                                    pkt_len_is_one_reg <= '1';
+                                else
+                                    pkt_len_is_one_reg <= '0';
+                                end if;
                                 if (i_download_data(19 downto 18) = "11") then
                                     pkt_info_complete_v.order_scope := "00";
                                     pkt_info_work.order_scope <= "00";
@@ -676,7 +700,7 @@ begin
                                 end if;
 
                                 if (fifo_write_en = '1' or waiting_word_valid = '1' or (is_skip_v = false and is_trailer_v = false and is_preamble_v = false)) then
-                                    if (unsigned(pkt_info_work.rw_length) = 1) then
+                                    if (pkt_len_is_one_reg = '1') then
                                         rx_state <= WAITING_TRAILER;
                                     else
                                         rx_state <= WRITING_DATA;
@@ -771,16 +795,16 @@ begin
                             payload_check_words      <= 0;
                             trailer_wait_committed_v := '0';
                         elsif (
-                            pkt_has_download_words_func(pkt_info_work) = true and
-                            pkt_is_read_func(pkt_info_work) = false and
+                            pkt_has_download_words_reg = '1' and
+                            pkt_is_read_reg = '0' and
                             pkt_info_work.atomic_flag = '0' and
-                            unsigned(pkt_info_work.rw_length) = 1 and
+                            pkt_len_is_one_reg = '1' and
                             to_integer(unsigned(pkt_info_work.start_address(15 downto 0))) = HUB_CSR_BASE_ADDR_CONST + HUB_CSR_WO_CTRL_CONST and
                             first_write_word(2) = '1'
                         ) then
                             fifo_rollback    <= '1';
                             soft_reset_pulse <= '1';
-                        elsif (pkt_has_download_words_func(pkt_info_work) = false) then
+                        elsif (pkt_has_download_words_reg = '0') then
                             if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                                 fifo_commit        <= '1';
                                 enqueue_pkt_info_v := pkt_info_work;
@@ -792,9 +816,9 @@ begin
                             end if;
                         elsif (
                             pkt_info_is_internal = '1' and
-                            pkt_is_read_func(pkt_info_work) = false and
+                            pkt_is_read_reg = '0' and
                             pkt_info_work.atomic_flag = '0' and
-                            unsigned(pkt_info_work.rw_length) = 1
+                            pkt_len_is_one_reg = '1'
                         ) then
                             if (enqueue_stage_count_v < ENQUEUE_STAGE_DEPTH_CONST) then
                                 fifo_rollback                <= '1';

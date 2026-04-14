@@ -188,7 +188,7 @@ proc ::mu3e::cmsis::spec::build_device {} {
                 [::mu3e::cmsis::svd::field reserved 4 28 -description "Reserved, read as zero." -access read-only]]]]
 
     return [::mu3e::cmsis::svd::device MU3E_SC_HUB \
-        -version 26.6.1.0411 \
+        -version 26.6.9.0414 \
         -description "CMSIS-SVD description of the slow-control hub internal CSR window. BaseAddress is 0 because this file describes the relative hub-owned register window; system integration supplies the live slave base address." \
         -peripherals [list \
             [::mu3e::cmsis::svd::peripheral SC_HUB_INTERNAL_CSR 0x0 \

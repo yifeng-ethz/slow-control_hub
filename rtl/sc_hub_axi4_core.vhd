@@ -1,11 +1,11 @@
 -- File name: sc_hub_axi4_core.vhd
 -- Author: OpenAI Codex
 -- =======================================
--- Version : 26.6.1
--- Date    : 20260411
--- Change  : Release-align the AXI4 core to v26.6.1 while using a
---           registered external-payload counter for the TX datapath and
---           keeping the shared protocol metadata consistent.
+-- Version : 26.6.9
+-- Date    : 20260414
+-- Change  : Release-align the AXI4 core to v26.6.9 while keeping the shared
+--           protocol metadata and CSR identity defaults consistent with the
+--           packaged release.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -28,9 +28,9 @@ entity sc_hub_axi4_core is
         IP_UID_G                   : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR_G            : natural := 26;
         VERSION_MINOR_G            : natural := 6;
-        VERSION_PATCH_G            : natural := 1;
-        BUILD_G                    : natural := 16#0411#;
-        VERSION_DATE_G             : natural := 16#20260411#;
+        VERSION_PATCH_G            : natural := 9;
+        BUILD_G                    : natural := 16#0414#;
+        VERSION_DATE_G             : natural := 16#20260414#;
         VERSION_GIT_G              : natural := 0;
         INSTANCE_ID_G              : natural := 0
     );
