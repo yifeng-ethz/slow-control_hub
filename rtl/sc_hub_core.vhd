@@ -1,12 +1,19 @@
 -- File name: sc_hub_core.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.6.9
--- Date    : 20260414
--- Change  : Borrow the internal-read "last fill" decision into a registered
---           lookahead flag so RD reply arming no longer closes timing through
---           the live read_fill_index comparator. Packaged as v26.6.9 with the
---           matching AVMM handler and pkt_rx control-path cleanup.
+-- Version : 26.6.10
+-- Date    : 20260415
+-- Change  : Stage the core soft-reset clears through a dedicated CORE_RESETTING
+--           FSM state walked by a 4-bucket counter. The previous in-place
+--           ~70-register clear in one cycle let Quartus merge the synchronous
+--           clear (|sclr) enable cone with the FSM combinational variables
+--           (response_reg_v, drain_remaining, ext_pkt_write_count, ...) and
+--           pulled a 6-LUT-deep cone through last_ext_read_data[*]|sclr,
+--           failing setup at Slow 85C / Slow 0C. The new flow transitions to
+--           CORE_RESETTING, walks core_reset_bucket = 0..3, and clears one
+--           bucket per cycle. Each register's |sclr enable is now a small
+--           compare on registered state ({core_state, core_reset_bucket}),
+--           breaking the cone by construction.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -30,9 +37,9 @@ entity sc_hub_core is
         IP_UID_G                   : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR_G            : natural := 26;
         VERSION_MINOR_G            : natural := 6;
-        VERSION_PATCH_G            : natural := 9;
-        BUILD_G                    : natural := 16#0414#;
-        VERSION_DATE_G             : natural := 16#20260414#;
+        VERSION_PATCH_G            : natural := 10;
+        BUILD_G                    : natural := 16#0415#;
+        VERSION_DATE_G             : natural := 16#20260415#;
         VERSION_GIT_G              : natural := 0;
         INSTANCE_ID_G              : natural := 0
     );
@@ -117,12 +124,22 @@ architecture rtl of sc_hub_core is
         EXT_WR_ARMING,
         EXT_WR_RUNNING,
         WR_REPLY_ARMING,
-        WAITING_REPLY
+        WAITING_REPLY,
+        -- Multi-cycle soft-reset: a 4-bucket counter walks the staged clears so
+        -- the |sclr enable on every cleared register is a small compare on the
+        -- registered {core_state, core_reset_bucket} pair, never a process
+        -- combinational cone. See CLAUDE.md "Staged Reset Trick".
+        CORE_RESETTING
     );
     subtype pending_queue_index_t is natural range 0 to OUTSTANDING_LIMIT_G - 1;
     type pending_pkt_mem_t is array (pending_queue_index_t) of sc_pkt_info_t;
 
     signal core_state                : core_state_t := IDLING;
+    -- Bucket walker for CORE_RESETTING. 2 bits = 4 staged clear cycles. The
+    -- |sclr enable for every register cleared inside CORE_RESETTING is a tiny
+    -- compare on (core_state = CORE_RESETTING and core_reset_bucket = N), so
+    -- Quartus cannot fold the FSM combinational cone into the clear net.
+    signal core_reset_bucket         : unsigned(1 downto 0) := (others => '0');
     signal pkt_info_reg              : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
     signal reply_suppress_reg        : std_logic := '0';
     signal pkt_ignore_reg            : std_logic := '0';
@@ -147,6 +164,11 @@ architecture rtl of sc_hub_core is
     signal ext_word_write_count      : unsigned(31 downto 0) := (others => '0');
     signal last_ext_read_addr        : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_read_data        : std_logic_vector(31 downto 0) := (others => '0');
+    -- Pipeline shadow: break the deep combinational enable cone that fans out to
+    -- last_ext_read_data[*]|ena. Captured value is 1 cycle delayed; CSR readback
+    -- via AVMM tolerates the shift trivially.
+    signal last_ext_read_data_capture : std_logic := '0';
+    signal i_bus_rd_data_r            : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_write_addr       : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_write_data       : std_logic_vector(31 downto 0) := (others => '0');
     signal read_fill_index           : unsigned(15 downto 0) := (others => '0');
@@ -774,6 +796,7 @@ begin
         if rising_edge(i_clk) then
             if (i_rst = '1') then
                 core_state               <= IDLING;
+                core_reset_bucket        <= (others => '0');
                 pkt_info_reg             <= SC_PKT_INFO_RESET_CONST;
                 reply_suppress_reg       <= '0';
                 pkt_ignore_reg           <= '0';
@@ -797,6 +820,8 @@ begin
                 ext_word_read_count      <= (others => '0');
                 last_ext_read_addr       <= (others => '0');
                 last_ext_read_data       <= (others => '0');
+                last_ext_read_data_capture <= '0';
+                i_bus_rd_data_r          <= (others => '0');
                 read_fill_index          <= (others => '0');
                 int_rd_last_fill_q       <= '0';
                 reply_stream_index       <= (others => '0');
@@ -853,6 +878,11 @@ begin
                 rd_fifo_write_en     <= '0';
                 avs_csr_readdatavalid_reg <= '0';
                 ext_write_diag_clear_pulse <= '0';
+                last_ext_read_data_capture <= '0';
+                i_bus_rd_data_r            <= i_bus_rd_data;
+                if (last_ext_read_data_capture = '1') then
+                    last_ext_read_data <= i_bus_rd_data_r;
+                end if;
                 err_pulse_v          := false;
                 internal_addr_error_v := false;
                 soft_reset_request_v := false;
@@ -1209,7 +1239,7 @@ begin
                                 next_read_addr_v := next_read_addr_v + resize(read_fill_index, 32);
                             end if;
                             last_ext_read_addr  <= std_logic_vector(next_read_addr_v);
-                            last_ext_read_data  <= i_bus_rd_data;
+                            last_ext_read_data_capture <= '1';
                             read_fill_index     <= read_fill_index + 1;
                             done_read_fill_v    := read_fill_index + 1;
                         end if;
@@ -1251,7 +1281,7 @@ begin
                             ext_word_read_count  <= sat_inc32_func(ext_word_read_count);
                             next_read_addr_v     := resize(unsigned(pkt_info_reg.start_address(15 downto 0)), 32);
                             last_ext_read_addr   <= std_logic_vector(next_read_addr_v);
-                            last_ext_read_data   <= i_bus_rd_data;
+                            last_ext_read_data_capture <= '1';
                             read_fill_index      <= to_unsigned(1, read_fill_index'length);
                         end if;
 
@@ -1470,6 +1500,106 @@ begin
                             reply_arm_use_fifo_usedw <= '1';
                             core_state               <= RD_REPLY_ARMING;
                         end if;
+
+                    when CORE_RESETTING =>
+                        -- Staged soft-reset: walk core_reset_bucket = 0..3 and
+                        -- clear ~17 registers per bucket. Each cleared register
+                        -- gets a |sclr enable of
+                        --   core_state = CORE_RESETTING and core_reset_bucket = N
+                        -- which is a tiny compare on registered state — no FSM
+                        -- combinational cone, no process-variable entanglement.
+                        -- Total soft-reset latency: 4 cycles + 1 transition.
+                        if (core_reset_bucket = "00") then
+                            -- Bucket 0: pkt/reply control + hub status
+                            pkt_info_reg             <= SC_PKT_INFO_RESET_CONST;
+                            reply_suppress_reg       <= '0';
+                            pkt_ignore_reg           <= '0';
+                            reply_has_data_reg       <= '0';
+                            reply_is_internal_reg    <= '0';
+                            response_reg_v           := SC_RSP_OK_CONST;
+                            hub_enable               <= '1';
+                            meta_page_sel            <= "00";
+                            hub_scratch              <= (others => '0');
+                            hub_err_flags            <= (others => '0');
+                            hub_err_count            <= (others => '0');
+                            hub_gts_counter          <= (others => '0');
+                            hub_gts_snapshot         <= (others => '0');
+                            hub_upload_store_forward <= '1';
+                            local_feb_type           <= HUB_FEB_TYPE_ALL_CONST;
+                            ooo_ctrl_enable          <= '0';
+                            core_reset_bucket        <= "01";
+
+                        elsif (core_reset_bucket = "01") then
+                            -- Bucket 1: ord/ext counters + last_ext_read diag
+                            ord_drain_count          <= (others => '0');
+                            ord_hold_count           <= (others => '0');
+                            ext_pkt_read_count       <= (others => '0');
+                            ext_pkt_write_count      <= (others => '0');
+                            ext_word_read_count      <= (others => '0');
+                            last_ext_read_addr       <= (others => '0');
+                            last_ext_read_data       <= (others => '0');
+                            last_ext_read_data_capture <= '0';
+                            i_bus_rd_data_r          <= (others => '0');
+                            read_fill_index          <= (others => '0');
+                            int_rd_last_fill_q       <= '0';
+                            reply_stream_index       <= (others => '0');
+                            reply_words_remaining    <= (others => '0');
+                            reply_arm_pending        <= '0';
+                            reply_arm_use_fifo_usedw <= '0';
+                            write_stream_index       <= (others => '0');
+                            drain_remaining          <= (others => '0');
+                            core_reset_bucket        <= "10";
+
+                        elsif (core_reset_bucket = "10") then
+                            -- Bucket 2: atomic + bus_cmd + rd_fifo controls
+                            atomic_read_data_reg     <= (others => '0');
+                            atomic_write_data_reg    <= (others => '0');
+                            deferred_atomic_pending  <= '0';
+                            deferred_atomic_pkt_info <= SC_PKT_INFO_RESET_CONST;
+                            deferred_atomic_response <= SC_RSP_OK_CONST;
+                            deferred_atomic_has_data <= '0';
+                            deferred_atomic_suppress <= '0';
+                            deferred_atomic_data_word <= (others => '0');
+                            bus_cmd_issued           <= '0';
+                            rd_fifo_clear            <= '1';
+                            rd_fifo_write_en         <= '0';
+                            rd_fifo_write_data       <= (others => '0');
+                            tx_reply_start_pulse     <= '0';
+                            bus_cmd_valid_pulse      <= '0';
+                            bus_cmd_is_read_reg      <= '0';
+                            bus_cmd_nonincrement_reg <= '0';
+                            bus_cmd_address_reg      <= (others => '0');
+                            bus_cmd_length_reg       <= (others => '0');
+                            core_reset_bucket        <= "11";
+
+                        else  -- "11"
+                            -- Bucket 3: queue/dispatch + misc + return to IDLING.
+                            -- The queue state (pending_pkt_mem, pending_pkt_count,
+                            -- pending_ext_count, barrier_guard_counter) is mirrored
+                            -- by variables that the post-case unconditional copies
+                            -- back into the signals at the end of the cycle, so
+                            -- direct signal assignments here would be overwritten.
+                            -- Drive the variables instead.
+                            queue_mem_v              := (others => SC_PKT_INFO_RESET_CONST);
+                            queue_count_v            := 0;
+                            queue_ext_count_v        := 0;
+                            barrier_guard_v          := 0;
+                            wr_data_valid_reg        <= '0';
+                            wr_data_word_reg         <= (others => '0');
+                            wr_data_reload_pending   <= '0';
+                            dispatch_pkt_reg         <= SC_PKT_INFO_RESET_CONST;
+                            dispatch_queue_idx_reg   <= 0;
+                            err_count_pulse_q        <= '0';
+                            tx_reply_ready_q         <= '0';
+                            pkt_len_is_one_q         <= '0';
+                            pkt_csr_write_offset_q   <= 0;
+                            soft_reset_pending       <= '0';
+                            avs_csr_readdata_reg     <= (others => '0');
+                            avs_csr_readdatavalid_reg <= '0';
+                            ext_write_diag_clear_pulse <= '0';
+                            core_reset_bucket        <= "00";
+                            core_state               <= IDLING;
+                        end if;
                 end case;
 
                 if (avs_csr_read = '1') then
@@ -1517,76 +1647,14 @@ begin
                 barrier_guard_counter <= barrier_guard_v;
 
                 if (soft_reset_request_v = true) then
-                    core_state               <= IDLING;
-                    pkt_info_reg             <= SC_PKT_INFO_RESET_CONST;
-                    reply_suppress_reg       <= '0';
-                    reply_has_data_reg       <= '0';
-                    reply_is_internal_reg    <= '0';
-                    response_reg_v           := SC_RSP_OK_CONST;
-                    hub_enable               <= '1';
-                    meta_page_sel            <= "00";
-                    hub_scratch              <= (others => '0');
-                    hub_err_flags            <= (others => '0');
-                    hub_err_count            <= (others => '0');
-                    hub_gts_counter          <= (others => '0');
-                    hub_gts_snapshot         <= (others => '0');
-                    hub_upload_store_forward <= '1';
-                    local_feb_type           <= HUB_FEB_TYPE_ALL_CONST;
-                    ooo_ctrl_enable          <= '0';
-                    ord_drain_count          <= (others => '0');
-                    ord_hold_count           <= (others => '0');
-                    ext_pkt_read_count       <= (others => '0');
-                    ext_pkt_write_count      <= (others => '0');
-                    ext_word_read_count      <= (others => '0');
-                    last_ext_read_addr       <= (others => '0');
-                    last_ext_read_data       <= (others => '0');
-                    read_fill_index          <= (others => '0');
-                    int_rd_last_fill_q       <= '0';
-                    reply_stream_index       <= (others => '0');
-                    reply_words_remaining    <= (others => '0');
-                    reply_arm_pending        <= '0';
-                    reply_arm_use_fifo_usedw <= '0';
-                    write_stream_index       <= (others => '0');
-                    drain_remaining          <= (others => '0');
-                    atomic_read_data_reg     <= (others => '0');
-                    atomic_write_data_reg    <= (others => '0');
-                    deferred_atomic_pending  <= '0';
-                    deferred_atomic_pkt_info <= SC_PKT_INFO_RESET_CONST;
-                    deferred_atomic_response <= SC_RSP_OK_CONST;
-                    deferred_atomic_has_data <= '0';
-                    deferred_atomic_suppress <= '0';
-                    deferred_atomic_data_word <= (others => '0');
-                    bus_cmd_issued           <= '0';
-                    rd_fifo_clear            <= '1';
-                    rd_fifo_write_en         <= '0';
-                    rd_fifo_write_data       <= (others => '0');
-                    tx_reply_start_pulse     <= '0';
-                    soft_reset_pulse         <= '1';
-                    bus_cmd_valid_pulse      <= '0';
-                    bus_cmd_is_read_reg      <= '0';
-                    bus_cmd_nonincrement_reg <= '0';
-                    bus_cmd_address_reg      <= (others => '0');
-                    bus_cmd_length_reg       <= (others => '0');
-                    pending_pkt_mem          <= (others => SC_PKT_INFO_RESET_CONST);
-                    pending_pkt_rd_ptr       <= 0;
-                    pending_pkt_wr_ptr       <= 0;
-                    pending_pkt_count        <= 0;
-                    pending_ext_count        <= 0;
-                    barrier_guard_counter    <= 0;
-                    wr_data_valid_reg        <= '0';
-                    wr_data_word_reg         <= (others => '0');
-                    wr_data_reload_pending   <= '0';
-                    dispatch_pkt_reg         <= SC_PKT_INFO_RESET_CONST;
-                    dispatch_queue_idx_reg   <= 0;
-                    pkt_ignore_reg           <= '0';
-                    err_count_pulse_q        <= '0';
-                    tx_reply_ready_q         <= '0';
-                    pkt_len_is_one_q         <= '0';
-                    pkt_csr_write_offset_q   <= 0;
-                    soft_reset_pending       <= '0';
-                    avs_csr_readdata_reg     <= (others => '0');
-                    avs_csr_readdatavalid_reg <= '0';
-                    ext_write_diag_clear_pulse <= '0';
+                    -- Trigger only: transition into the dedicated CORE_RESETTING
+                    -- state; the staged clears live in the case arm above. This
+                    -- keeps the tx_reply / soft_reset / fifo pulse defaults in
+                    -- effect for this cycle without re-entering the wide clear
+                    -- block that used to fold the FSM cone into every |sclr.
+                    core_state        <= CORE_RESETTING;
+                    core_reset_bucket <= (others => '0');
+                    soft_reset_pulse  <= '1';
                 end if;
             end if;
         end if;

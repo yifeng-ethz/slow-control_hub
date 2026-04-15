@@ -395,7 +395,7 @@ proc sc_hub_v2_update_buf_diagram {} {
     set bp    [get_parameter_value BP_FIFO_DEPTH]
 
     set html "<html><pre style='font-family:monospace; font-size:11px;'>"
-    append html "  SC CMD --> [pkt_rx + validator] --> [classifier]\n"
+    append html "  SC CMD --> \[pkt_rx + validator\] --> \[classifier\]\n"
     append html "                                      |             \n"
     append html "                 ext path            |            int path\n"
     append html "                 +-------------------+-------------------+\n"
@@ -404,14 +404,14 @@ proc sc_hub_v2_update_buf_diagram {} {
     append html "                 +---------+----------+----------+--------+\n"
     append html "                           | cmd_order_fifo      |\n"
     append html "                           v                     v\n"
-    append html "                      [dispatch FSM]      [CSR handler]\n"
+    append html "                      \[dispatch FSM\]      \[CSR handler\]\n"
     append html "                           |                     |\n"
-    append html "                    [bus handler]               |\n"
+    append html "                    \[bus handler\]               |\n"
     append html "                           |                     |\n"
     append html "                 | ext_up_pld ($upld) | int_up_pld ($iupld) |\n"
     append html "                 +----------+----------+----------+---------+\n"
     append html "                            \\         reply assembler      \n"
-    append html "                             +-----------> [BP FIFO ($bp)] --> SC REPLY\n"
+    append html "                             +-----------> \[BP FIFO ($bp)\] --> SC REPLY\n"
     append html "</pre></html>"
 
     catch {set_display_item_property buf_diagram_html TEXT $html}

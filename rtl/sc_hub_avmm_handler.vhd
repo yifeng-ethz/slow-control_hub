@@ -1,16 +1,18 @@
 -- File name: sc_hub_avmm_handler.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
--- Version : 26.2.6
+-- Version : 26.2.8
 -- Date    : 20260414
--- Change  : Stage accepted AVMM read launches so the LAUNCHING_READ state no
---           longer closes timing through the live interconnect waitrequest
---           feedback while preserving zero-cycle acceptance when the slave
---           drops waitrequest in the launch cycle. Also stage accepted write
---           beat diagnostics locally and move write address/remaining-beat
---           tracking onto dedicated registers so the same-cycle accept path
---           no longer closes timing through words_seen and the write router
---           cone.
+-- Change  : Unconditionally clock launch_stage_data_reg/response_reg so their
+--           CE is no longer gated on launch_accept_comb (which contains
+--           avm_hub_waitrequest). The Qsys interconnect contributes ~5 LUT
+--           levels between avm_hub_write and avm_hub_waitrequest; leaving
+--           34 data/response bits enabled by that feedback cone kept the
+--           transceiver_pll_clock[0] path failing by -1.206 ns after the
+--           reissue_armed_reg staging. Capturing avm_hub_readdata/response
+--           every cycle is safe: launch_stage_valid (still gated on accept)
+--           fences consumption, and VHDL pre-edge reads ensure the handler
+--           branch sees the value latched on the accept cycle.
 -- =======================================
 -- altera vhdl_input_version vhdl_2008
 
@@ -91,6 +93,7 @@ architecture rtl of sc_hub_avmm_handler is
     signal launch_stage_data_valid : std_logic := '0';
     signal launch_stage_data_reg : std_logic_vector(31 downto 0) := (others => '0');
     signal launch_stage_response_reg : std_logic_vector(1 downto 0) := SC_RSP_OK_CONST;
+    signal reissue_armed_reg   : std_logic := '0';
     signal launch_reissue_read : std_logic;
     signal launch_read_comb    : std_logic;
     signal launch_accept_comb  : std_logic;
@@ -116,8 +119,7 @@ begin
         avmm_state = LAUNCHING_READ and
         launch_stage_valid = '1' and
         launch_stage_data_valid = '1' and
-        cmd_nonincrement_reg = '1' and
-        (words_seen + to_unsigned(1, words_seen'length) < cmd_length_reg)
+        reissue_armed_reg = '1'
     ) else '0';
     launch_read_comb <= '1' when (
         avmm_state = LAUNCHING_READ and
@@ -165,6 +167,7 @@ begin
                 launch_stage_data_valid <= '0';
                 launch_stage_data_reg <= (others => '0');
                 launch_stage_response_reg <= SC_RSP_OK_CONST;
+                reissue_armed_reg   <= '0';
                 rd_data_valid_pulse <= '0';
                 rd_data_reg         <= (others => '0');
                 rd_data_last_pulse  <= '0';
@@ -180,6 +183,14 @@ begin
                 timeout_pulse       <= '0';
                 wr_accept_pulse     <= '0';
 
+                -- Unconditional capture: decouples launch_stage_data_reg and
+                -- launch_stage_response_reg CE from avm_hub_waitrequest, lifting
+                -- 34 bits out of the interconnect feedback cone. Consumption is
+                -- still fenced by launch_stage_valid, so only the value latched
+                -- on the accept cycle is ever observed.
+                launch_stage_data_reg <= avm_hub_readdata;
+                launch_stage_response_reg <= avm_hub_response;
+
                 case avmm_state is
                     when IDLING =>
                         timeout_counter <= 0;
@@ -188,6 +199,7 @@ begin
                         wr_words_remaining_reg <= (others => '0');
                         launch_stage_valid <= '0';
                         launch_stage_data_valid <= '0';
+                        reissue_armed_reg <= '0';
                         if (i_cmd_valid = '1') then
                             cmd_address_reg <= i_cmd_address;
                             cmd_nonincrement_reg <= i_cmd_nonincrement;
@@ -197,6 +209,12 @@ begin
                             response_reg    <= SC_RSP_OK_CONST;
                             if (i_cmd_is_read = '1') then
                                 avmm_state <= LAUNCHING_READ;
+                                if (i_cmd_nonincrement = '1' and
+                                    unsigned(i_cmd_length) > to_unsigned(1, i_cmd_length'length)) then
+                                    reissue_armed_reg <= '1';
+                                else
+                                    reissue_armed_reg <= '0';
+                                end if;
                             else
                                 avmm_state <= WRITING_DATA;
                             end if;
@@ -236,6 +254,12 @@ begin
                                 end if;
 
                                 words_seen <= words_seen + to_unsigned(1, words_seen'length);
+                                if (cmd_nonincrement_reg = '1' and
+                                    (words_seen + to_unsigned(2, words_seen'length) < cmd_length_reg)) then
+                                    reissue_armed_reg <= '1';
+                                else
+                                    reissue_armed_reg <= '0';
+                                end if;
                             else
                                 avmm_state <= READING_DATA;
                             end if;
@@ -244,8 +268,6 @@ begin
                         if (launch_accept_comb = '1') then
                             launch_stage_valid <= '1';
                             launch_stage_data_valid <= avm_hub_readdatavalid;
-                            launch_stage_data_reg <= avm_hub_readdata;
-                            launch_stage_response_reg <= avm_hub_response;
                         end if;
 
                     when READING_DATA =>
@@ -276,6 +298,12 @@ begin
                             end if;
 
                             words_seen <= words_seen + 1;
+                            if (cmd_nonincrement_reg = '1' and
+                                (words_seen + to_unsigned(2, words_seen'length) < cmd_length_reg)) then
+                                reissue_armed_reg <= '1';
+                            else
+                                reissue_armed_reg <= '0';
+                            end if;
                         elsif (timeout_counter + 1 >= RD_TIMEOUT_CYCLES_G) then
                             response_reg    <= SC_RSP_DECERR_CONST;
                             done_pulse      <= '1';
