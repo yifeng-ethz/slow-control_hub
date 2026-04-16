@@ -1,6 +1,22 @@
 -- File name: sc_hub_core.vhd
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
+-- Version : 26.6.11
+-- Date    : 20260415
+-- Change  : Isolate last_ext_read_data into a dedicated small process
+--           (last_ext_read_data_reg) driven by last_ext_read_data_clear_pulse
+--           and last_ext_read_data_capture. The bucketed CORE_RESETTING staging
+--           (26.6.10) reduced the merged |sclr cone for most registers, but
+--           last_ext_read_data still sat inside the big FSM process with four
+--           clear branches (CSR ctrl clear at HUB_CSR_WO_CTRL, sync reset,
+--           CORE_RESETTING bucket 01, and the capture if-branch). Quartus
+--           merged those four branches' conditions into one |sclr enable net
+--           that pulled drain_remaining[6] through a 6-LUT cone
+--           (core_state~37 -> LessThan22 -> Selector2011 -> hub_err_flags~1 ->
+--           ext_word_read_count -> ext_pkt_read_count -> |sclr), failing
+--           round-8 Slow 85C setup at -0.411. Moving the flop to its own
+--           process with a single-flop clear pulse collapses the enable cone
+--           to one compare, eliminating the drain_remaining dependency.
 -- Version : 26.6.10
 -- Date    : 20260415
 -- Change  : Stage the core soft-reset clears through a dedicated CORE_RESETTING
@@ -37,7 +53,7 @@ entity sc_hub_core is
         IP_UID_G                   : natural := 16#53434842#; -- ASCII "SCHB"
         VERSION_MAJOR_G            : natural := 26;
         VERSION_MINOR_G            : natural := 6;
-        VERSION_PATCH_G            : natural := 10;
+        VERSION_PATCH_G            : natural := 11;
         BUILD_G                    : natural := 16#0415#;
         VERSION_DATE_G             : natural := 16#20260415#;
         VERSION_GIT_G              : natural := 0;
@@ -169,6 +185,11 @@ architecture rtl of sc_hub_core is
     -- via AVMM tolerates the shift trivially.
     signal last_ext_read_data_capture : std_logic := '0';
     signal i_bus_rd_data_r            : std_logic_vector(31 downto 0) := (others => '0');
+    -- Dedicated clear pulse from the main FSM. Drives a dedicated
+    -- last_ext_read_data_proc process so the register's |sclr enable is a
+    -- single-flop compare instead of the merged FSM cone that pulled
+    -- drain_remaining[6] through a 6-LUT path at Slow-85C setup.
+    signal last_ext_read_data_clear_pulse : std_logic := '0';
     signal last_ext_write_addr       : std_logic_vector(31 downto 0) := (others => '0');
     signal last_ext_write_data       : std_logic_vector(31 downto 0) := (others => '0');
     signal read_fill_index           : unsigned(15 downto 0) := (others => '0');
@@ -737,7 +758,7 @@ begin
                         ext_pkt_write_count       <= (others => '0');
                         ext_word_read_count       <= (others => '0');
                         last_ext_read_addr        <= (others => '0');
-                        last_ext_read_data        <= (others => '0');
+                        last_ext_read_data_clear_pulse <= '1';
                         ext_write_diag_clear_pulse <= '1';
                     end if;
                     if (write_word_in(2) = '1') then
@@ -819,7 +840,7 @@ begin
                 ext_pkt_write_count      <= (others => '0');
                 ext_word_read_count      <= (others => '0');
                 last_ext_read_addr       <= (others => '0');
-                last_ext_read_data       <= (others => '0');
+                last_ext_read_data_clear_pulse <= '0';
                 last_ext_read_data_capture <= '0';
                 i_bus_rd_data_r          <= (others => '0');
                 read_fill_index          <= (others => '0');
@@ -879,10 +900,8 @@ begin
                 avs_csr_readdatavalid_reg <= '0';
                 ext_write_diag_clear_pulse <= '0';
                 last_ext_read_data_capture <= '0';
+                last_ext_read_data_clear_pulse <= '0';
                 i_bus_rd_data_r            <= i_bus_rd_data;
-                if (last_ext_read_data_capture = '1') then
-                    last_ext_read_data <= i_bus_rd_data_r;
-                end if;
                 err_pulse_v          := false;
                 internal_addr_error_v := false;
                 soft_reset_request_v := false;
@@ -1537,7 +1556,7 @@ begin
                             ext_pkt_write_count      <= (others => '0');
                             ext_word_read_count      <= (others => '0');
                             last_ext_read_addr       <= (others => '0');
-                            last_ext_read_data       <= (others => '0');
+                            last_ext_read_data_clear_pulse <= '1';
                             last_ext_read_data_capture <= '0';
                             i_bus_rd_data_r          <= (others => '0');
                             read_fill_index          <= (others => '0');
@@ -1659,6 +1678,25 @@ begin
             end if;
         end if;
     end process core_fsm;
+
+    -- Dedicated register for last_ext_read_data. Isolating this flop from the
+    -- main FSM process collapses its |sclr enable cone from the merged 6-LUT
+    -- FSM cloud (drain_remaining[6] -> core_state -> LessThan22 -> Selector2011
+    -- -> hub_err_flags~1 -> ext_word_read_count -> ext_pkt_read_count -> sclr)
+    -- down to a single-flop compare on last_ext_read_data_clear_pulse /
+    -- last_ext_read_data_capture. Drove -0.411 slack at Slow 85C in round-8.
+    last_ext_read_data_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if (i_rst = '1') then
+                last_ext_read_data <= (others => '0');
+            elsif (last_ext_read_data_clear_pulse = '1') then
+                last_ext_read_data <= (others => '0');
+            elsif (last_ext_read_data_capture = '1') then
+                last_ext_read_data <= i_bus_rd_data_r;
+            end if;
+        end if;
+    end process last_ext_read_data_reg;
 
     ext_write_diag_reg : process(i_clk)
     begin
