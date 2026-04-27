@@ -36,11 +36,12 @@ def find_vcover(tb_dir: Path) -> str:
             Path(env_qh) / "bin" / "vcover",
             Path(env_qh) / "linux_x86_64" / "vcover",
         ])
+    env_vcover = os.environ.get("VCOVER", "").strip()
+    if env_vcover:
+        candidates.append(Path(env_vcover))
     candidates.extend([
-        Path("/data1/intelFPGA_pro/23.1/questa_fe/bin/vcover"),
-        Path("/data1/intelFPGA_pro/23.1/questa_fe/linux_x86_64/vcover"),
-        Path("/data1/intelFPGA_pro/23.1/questa_fse/bin/vcover"),
-        Path("/data1/intelFPGA_pro/23.1/questa_fse/linux_x86_64/vcover"),
+        Path("/data1/questaone_sim/questasim/bin/vcover"),
+        Path("/data1/questaone_sim/questasim/linux_x86_64/vcover"),
     ])
     for cand in candidates:
         if cand.is_file():

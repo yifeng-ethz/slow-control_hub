@@ -8,11 +8,12 @@ TRANSCRIPT_DIR="${TB_DIR}/sim_runs"
 OUTPUT_DIR="${TB_DIR}/sim_runs/coverage"
 
 mkdir -p "$OUTPUT_DIR"
+source "${SCRIPT_DIR}/../../../scripts/questa_one_env.sh"
 
 find_vcover() {
   local qh="${QUESTA_HOME-}"
   local cand
-  for cand in     "${qh}/bin/vcover"     "${qh}/linux_x86_64/vcover"     /data1/intelFPGA_pro/23.1/questa_fe/bin/vcover     /data1/intelFPGA_pro/23.1/questa_fe/linux_x86_64/vcover     /data1/intelFPGA_pro/23.1/questa_fse/bin/vcover     /data1/intelFPGA_pro/23.1/questa_fse/linux_x86_64/vcover
+  for cand in "${VCOVER}" "${qh}/bin/vcover" "${qh}/linux_x86_64/vcover"
   do
     if [ -n "$cand" ] && [ -x "$cand" ]; then
       printf '%s

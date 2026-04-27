@@ -18,8 +18,7 @@ SUMMARY_CSV="${OUT_ROOT}/summary.csv"
 MERGED_UCDB="${OUT_ROOT}/merged.ucdb"
 REPORT_TXT="${OUT_ROOT}/merged_report.txt"
 
-QUESTA_HOME="${QUESTA_HOME:-/data1/intelFPGA_pro/23.1/questa_fse}"
-export LM_LICENSE_FILE="${LM_LICENSE_FILE:-8161@lic-mentor.ethz.ch}"
+source "${SCRIPT_DIR}/../../../scripts/questa_one_env.sh"
 
 mkdir -p "$LOG_DIR" "$COV_DIR"
 cd "$TB_DIR"

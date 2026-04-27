@@ -1,6 +1,6 @@
 # ============================================================================
-# sc_hub_v2 "Slow Control Hub v2" v26.6.9.0414
-# Yifeng Wang 2026.04.14
+# sc_hub_v2 "Slow Control Hub v2" v26.6.10.0423
+# Yifeng Wang 2026.04.23
 #
 # Comprehensive _hw.tcl for sc_hub_v2 with:
 #   - Preset-based configuration (JESD204B GUI style)
@@ -29,7 +29,7 @@ package require -exact qsys 16.1
 
 set_module_property NAME                    sc_hub_v2
 set_module_property DISPLAY_NAME            "Slow Control Hub Mu3E IP"
-set_module_property VERSION                 26.6.9.0414
+set_module_property VERSION                 26.6.10.0423
 set_module_property DESCRIPTION             "Slow Control Hub Mu3e IP Core"
 set_module_property GROUP                   "Mu3e Control Plane/Modules"
 set_module_property AUTHOR                  "Yifeng Wang"
@@ -40,7 +40,7 @@ set_module_property EDITABLE                true
 set_module_property REPORT_TO_TALKBACK      false
 set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY        false
-set_module_property ICON_PATH               ../quartus_system/logo/mu3e_logo.png
+set_module_property ICON_PATH               ../quartus_system/misc/logo/mu3e_logo.png
 
 # Callbacks — routed to sub-file procs
 set_module_property ELABORATION_CALLBACK    sc_hub_v2_elaborate

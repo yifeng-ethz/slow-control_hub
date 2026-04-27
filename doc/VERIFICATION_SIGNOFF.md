@@ -41,15 +41,22 @@ Practical application here:
 
 ## Environment
 
-- Installed simulators on this host: `questa_fse` and `questa_fe` under
-  `/data1/intelFPGA_pro/23.1/`
-- Full Edition status: the `questa_fe` binary is installed and reports the
-  correct Edition banner, and `mtiverification` is check-outable via
-  `lmutil lmdiag`, but live `vsim` startup still fails with `Invalid license
-  environment` on this host. So exact non-Starter compliance remains open.
-- Rerunnable working path for the measurements below: `questa_fse` using the
-  host local fixed-node Intel file `/data1/intelFPGA/LR-121070_License.dat`
-  through the existing `tb/Makefile` flow.
+- Active simulator on this host: QuestaOne 2026 at
+  `/data1/questaone_sim/questasim`
+- The supported environment comes from the shared repo wrappers
+  `../../scripts/questa_one_env.sh` and `../../scripts/questa_one.mk`. Those
+  wrappers export `QUESTA_HOME`, `QSIM_INI`, and the ETH floating-license chain
+  used by the standalone harness.
+- Fresh rerun evidence from the current toolchain migration exists for
+  `./scripts/run_uvm_case.sh T123`, which passes on both AVALON and AXI4 on
+  2026-04-21.
+- The promoted full-suite entry point `./scripts/run_full_cov_suite.sh`
+  completed on 2026-04-21 with `pass=81 fail=0 skip=0`.
+- The corresponding merged UCDB is
+  `tb/sim_runs/cov_full_suite/merged.ucdb`, and the merged summary reported
+  statement `73.55%`, branch `64.66%`, condition `44.79%`, expression
+  `61.95%`, FSM state `94.87%`, FSM transition `51.45%`, toggle `46.62%`,
+  covergroup bins `70.37%`, and filtered total `67.52%`.
 - Coverage compile switches: `+cover=sbecft` and `-coverage`
 - Structural metrics captured: statements, branches, conditions, expressions,
   FSM states, FSM transitions, toggles
@@ -423,8 +430,9 @@ Targeted, non-routine cases:
   timeout/recovery boundaries.
 - Add unreachable-bin analysis or formal closure for the remaining uncovered
   structural space, following the plateau evidence above.
-- Resolve the `questa_fe` runtime checkout problem on this host so the flow can
-  satisfy the exact simulator-tier requirement of the referenced DV workflow.
+- Complete a fresh promoted full-suite rerun on the supported QuestaOne path so
+  the aggregate signoff tables in this note are backed by same-toolchain
+  evidence instead of mixed-date baselines.
 - Link future signoff updates back into the `DV_PLAN.md` feature matrix so the
   closure argument remains spec-traceable.
 
@@ -476,4 +484,3 @@ Targeted, non-routine cases:
   parameter-sweep variants for disabled-feature nets, and long-running
   counter saturation. Deferred to a follow-up release and does not gate the
   chief-architect signoff on functional coverage for `26.6.4.0412`.
-

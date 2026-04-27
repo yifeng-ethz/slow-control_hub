@@ -1,37 +1,12 @@
-QUESTA_PREFER_FE ?= 0
-ifeq ($(QUESTA_PREFER_FE),1)
-ifneq ($(wildcard /data1/intelFPGA_pro/23.1/questa_fe),)
-QUESTA_HOME ?= /data1/intelFPGA_pro/23.1/questa_fe
-else
-QUESTA_HOME ?= /data1/intelFPGA_pro/23.1/questa_fse
-endif
-else
-ifneq ($(wildcard /data1/intelFPGA_pro/23.1/questa_fse),)
-QUESTA_HOME ?= /data1/intelFPGA_pro/23.1/questa_fse
-else
-QUESTA_HOME ?= /data1/intelFPGA_pro/23.1/questa_fe
-endif
-endif
-QUESTA_FLAVOR := $(notdir $(QUESTA_HOME))
-UVM_HOME ?= $(firstword $(wildcard $(QUESTA_HOME)/verilog_src/uvm-1.2 $(QUESTA_HOME)/uvm-1.2))
-QUESTA_LICENSE ?= $(firstword $(wildcard $(QUESTA_HOME)/LR-*_License.dat))
-ETH_MENTOR_SERVER ?= 8161@lic-mentor.ethz.ch
-TB_LICENSE_CHAIN := $(ETH_MENTOR_SERVER)
-ifneq ($(wildcard $(QUESTA_LICENSE)),)
-TB_LICENSE_CHAIN := $(ETH_MENTOR_SERVER):$(QUESTA_LICENSE)
-endif
-UVM_DPI_SO ?= $(firstword $(wildcard $(QUESTA_HOME)/uvm-1.2/linux_x86_64/uvm_dpi.so $(QUESTA_HOME)/verilog_src/uvm-1.2/linux_x86_64/uvm_dpi.so))
+include ../../scripts/questa_one.mk
+
+UVM_HOME ?= $(QUESTA_UVM_HOME)
+UVM_DPI_SO ?= $(QUESTA_UVM_DPI_SO)
 UVM_DPI_LIB := $(basename $(UVM_DPI_SO))
 UVM_VSIM_OPTS :=
 ifneq ($(UVM_DPI_SO),)
 UVM_VSIM_OPTS += -sv_lib $(UVM_DPI_LIB)
 endif
-
-VLIB = $(firstword $(wildcard $(QUESTA_HOME)/bin/vlib $(QUESTA_HOME)/linux_x86_64/vlib))
-VMAP = $(firstword $(wildcard $(QUESTA_HOME)/bin/vmap $(QUESTA_HOME)/linux_x86_64/vmap))
-VLOG = $(firstword $(wildcard $(QUESTA_HOME)/bin/vlog $(QUESTA_HOME)/linux_x86_64/vlog))
-VCOM = $(firstword $(wildcard $(QUESTA_HOME)/bin/vcom $(QUESTA_HOME)/linux_x86_64/vcom))
-VSIM = $(firstword $(wildcard $(QUESTA_HOME)/bin/vsim $(QUESTA_HOME)/linux_x86_64/vsim))
 VLOG_OPTS ?=
 VCOM_OPTS ?= -suppress 12110
 VSIM_OPTS ?=
@@ -48,7 +23,7 @@ endif
 SIM_DO ?= run -all; quit -f
 VCD_FILE ?= $(TEST_NAME).vcd
 UVM_VCD_FILE ?= $(UVM_TESTNAME).vcd
-QUESTA_MODELSIM_INI ?= $(QUESTA_HOME)/modelsim.ini
+QUESTA_MODELSIM_INI ?= $(QSIM_INI)
 
 WORK       ?= work_sc_hub_tb
 RTL_DIR    := ../rtl
@@ -62,14 +37,6 @@ UVM_TESTNAME ?= sc_hub_base_test
 SIM_PLUSARGS ?=
 MODELSIM_INI := $(CURDIR)/modelsim.ini
 DPI_CPP_PATH ?= /usr/bin/gcc
-
-LM_LICENSE_FILE := $(TB_LICENSE_CHAIN)
-export LM_LICENSE_FILE
-ifeq ($(QUESTA_FLAVOR),questa_fe)
-MGLS_LICENSE_FILE := $(TB_LICENSE_CHAIN)
-SALT_LICENSE_SERVER := $(ETH_MENTOR_SERVER)
-export MGLS_LICENSE_FILE SALT_LICENSE_SERVER
-endif
 
 SIM_FILES = \
 	$(SIM_DIR)/sc_hub_pkg.sv \
@@ -213,6 +180,10 @@ license_diag:
 	@echo "--- vsim banner ---"
 	@$(VSIM) -version
 	@echo "--- mtiverification availability ---"
-	@$(QUESTA_HOME)/linux_x86_64/lmutil lmdiag -c $(ETH_MENTOR_SERVER) -n mtiverification || true
+	@$(LMUTIL) lmdiag -c $(QUESTA_LICENSE_SERVER) -n mtiverification || true
+
+fe_runtime_probe:
+	@echo "legacy FE runtime probing is deprecated; the only supported simulator is $(QUESTA_HOME)." >&2
+	@exit 2
 
 .PHONY: compile_rtl compile_sim compile_uvm run_sim_smoke run_uvm_smoke run_vcd run_uvm_vcd run_directed run_uvm run_basic run_perf run_edge run_error run_all coverage_report wave_index run_cov_closure license_diag

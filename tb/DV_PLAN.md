@@ -4,8 +4,12 @@
 **Author:** Yifeng Wang
 **Companion:** ../doc/RTL_PLAN.md, ../doc/TLM_PLAN.md, ../doc/TLM_NOTE.md
 **System DV Plan:** `/home/yifeng/packages/online_dpv2/online/fe_board/fe_scifi/tb/scifi_dp/doc/DV_PLAN.md`
-**Simulator Goal:** full Mentor Questa with ETH floating license (`8161@lic-mentor.ethz.ch`)  
-**Current Tool Reality:** local tree currently resolves to the Intel-packaged `questa_fse` path; this remains a compliance blocker until a non-FSE toolchain is installed or exposed on the host  
+**Simulator Goal:** QuestaOne 2026 with the ETH floating license chain
+(`8161@lic-mentor.ethz.ch`)  
+**Current Tool Reality:** the supported standalone flow now comes from the
+shared `scripts/questa_one.mk` / `scripts/questa_one_env.sh` wrappers and
+resolves to `/data1/questaone_sim/questasim` on this host. Older FSE-only
+notes below are historical context, not the active runtime contract.  
 **UVM:** UVM 1.2
 
 ---
@@ -416,127 +420,70 @@ slow-control_hub/
 
 ---
 
-## 7. Makefile Pattern (Questa FSE)
+## 7. Makefile Pattern (QuestaOne 2026)
 
 ```makefile
-QUESTA_HOME     ?= /data1/intelFPGA_pro/23.1/questa_fse
-QUESTA_LICENSE  := $(QUESTA_HOME)/LR-287689_License.dat
-ETH_LIC_SERVER  := 8161@lic-mentor.ethz.ch
-UVM_HOME        := $(QUESTA_HOME)/verilog_src/uvm-1.2
+include ../../scripts/questa_one.mk
 
-ifeq ($(wildcard $(QUESTA_LICENSE)),)
-  export LM_LICENSE_FILE := $(ETH_LIC_SERVER)
-else
-  export LM_LICENSE_FILE := $(QUESTA_LICENSE):$(ETH_LIC_SERVER)
-endif
-
-VLIB  = $(QUESTA_HOME)/bin/vlib
-VLOG  = $(QUESTA_HOME)/bin/vlog
-VCOM  = $(QUESTA_HOME)/bin/vcom
-VSIM  = $(QUESTA_HOME)/bin/vsim
-
-WORK  = work
-RTL_DIR   = ../..
-DV_DIR    = ..
-TB_DIR    = $(DV_DIR)/tb
-UVM_DIR   = $(DV_DIR)/uvm
-TEST_DIR  = $(DV_DIR)/tests
-
-BUS_TYPE  ?= AVALON
-TEST      ?= t001_avmm_single_read
+UVM_HOME            ?= $(QUESTA_UVM_HOME)
+UVM_DPI_SO          ?= $(QUESTA_UVM_DPI_SO)
+QUESTA_MODELSIM_INI ?= $(QSIM_INI)
+MODELSIM_INI        := $(CURDIR)/modelsim.ini
+WORK                ?= work_sc_hub_tb
+BUS_TYPE            ?= AVALON
+UVM_TESTNAME        ?= sc_hub_base_test
 
 $(WORK):
 	$(VLIB) $(WORK)
 
-compile_rtl: $(WORK)
-	$(VCOM) -2008 -work $(WORK) \
-		$(RTL_DIR)/sc_hub_pkg.vhd \
-		$(RTL_DIR)/fifo/sc_hub_fifo_sc.vhd \
-		$(RTL_DIR)/fifo/sc_hub_fifo_sf.vhd \
-		$(RTL_DIR)/fifo/sc_hub_fifo_bp.vhd \
-		$(RTL_DIR)/sc_hub_pkt_rx.vhd \
-		$(RTL_DIR)/sc_hub_pkt_tx.vhd \
-		$(RTL_DIR)/sc_hub_avmm_handler.vhd \
-		$(RTL_DIR)/sc_hub_axi4_handler.vhd \
-		$(RTL_DIR)/sc_hub_malloc.vhd \
-		$(RTL_DIR)/sc_hub_pld_ram.vhd \
-		$(RTL_DIR)/sc_hub_admit_ctrl.vhd \
-		$(RTL_DIR)/sc_hub_credit_mgr.vhd \
-		$(RTL_DIR)/sc_hub_ord_tracker.vhd \
-		$(RTL_DIR)/sc_hub_core.vhd \
-		$(RTL_DIR)/sc_hub_top.vhd
-
-compile_tb: compile_rtl
-	$(VLOG) -sv -work $(WORK) +define+BUS_TYPE=\"$(BUS_TYPE)\" \
-		$(TB_DIR)/sc_hub_tb_pkg.sv \
-		$(TB_DIR)/sc_hub_addr_map.sv \
-		$(TB_DIR)/sc_hub_ref_model.sv \
-		$(TB_DIR)/sc_pkt_driver.sv \
-		$(TB_DIR)/sc_pkt_monitor.sv \
-		$(TB_DIR)/avmm_slave_bfm.sv \
-		$(TB_DIR)/axi4_slave_bfm.sv \
-		$(TB_DIR)/sc_hub_scoreboard.sv \
-		$(TB_DIR)/sc_hub_assertions.sv \
-		$(TB_DIR)/sc_hub_ord_checker.sv \
-		$(TB_DIR)/sc_hub_freelist_monitor.sv \
-		$(TB_DIR)/sc_hub_tb_top.sv
+$(MODELSIM_INI): $(WORK)
+	cp "$(QUESTA_MODELSIM_INI)" "$(MODELSIM_INI)"
+	chmod u+w "$(MODELSIM_INI)"
+	$(VMAP) -modelsimini $(MODELSIM_INI) $(WORK) $(WORK)
 
 compile_uvm: compile_rtl
-	$(VLOG) -sv -work $(WORK) \
-		+define+UVM_NO_DPI +define+BUS_TYPE=\"$(BUS_TYPE)\" \
+	$(VLOG) -modelsimini $(MODELSIM_INI) -sv -work $(WORK) \
 		+incdir+$(UVM_HOME)/src \
 		$(UVM_HOME)/src/uvm_pkg.sv \
-		$(UVM_DIR)/sc_pkt_seq_item.sv \
-		$(UVM_DIR)/sc_pkt_driver_uvm.sv \
-		$(UVM_DIR)/sc_pkt_monitor_uvm.sv \
-		$(UVM_DIR)/sc_pkt_agent.sv \
-		$(UVM_DIR)/bus_agent.sv \
-		$(UVM_DIR)/sc_hub_scoreboard_uvm.sv \
-		$(UVM_DIR)/sc_hub_cov_collector.sv \
-		$(UVM_DIR)/sc_hub_ord_checker_uvm.sv \
-		$(UVM_DIR)/sc_hub_uvm_env_cfg.sv \
-		$(UVM_DIR)/sc_hub_uvm_env.sv \
-		$(UVM_DIR)/sc_hub_base_test.sv \
-		$(UVM_DIR)/sc_hub_sweep_test.sv \
-		$(UVM_DIR)/sequences/*.sv \
-		$(UVM_DIR)/sc_hub_uvm_tb_top.sv
+		$(SIM_DIR)/sc_hub_pkg.sv \
+		$(SIM_DIR)/sc_hub_addr_map.sv \
+		$(SIM_DIR)/sc_hub_ref_model.sv \
+		$(SIM_DIR)/avmm_slave_bfm.sv \
+		$(SIM_DIR)/axi4_slave_bfm.sv \
+		$(SIM_DIR)/sc_hub_assertions.sv \
+		$(UVM_FILES)
 
-run_directed: compile_tb
-	$(VLOG) -sv -work $(WORK) +define+BUS_TYPE=\"$(BUS_TYPE)\" \
-		$(TEST_DIR)/directed/$(TEST).sv
-	$(VSIM) -c -nodpiexports -suppress 19 -suppress 3009 \
-		-work $(WORK) sc_hub_tb_top \
-		+TEST_NAME=$(TEST) \
+run_uvm_smoke: compile_uvm
+	$(VSIM) -modelsimini $(MODELSIM_INI) -c -quiet \
+		-sv_lib $(basename $(UVM_DPI_SO)) \
+		-work $(WORK) tb_top \
+		+UVM_TESTNAME=$(UVM_TESTNAME) \
 		-do "run -all; quit -f"
 
-run_uvm: compile_uvm
-	$(VLOG) -sv -work $(WORK) +define+UVM_NO_DPI +define+BUS_TYPE=\"$(BUS_TYPE)\" \
-		$(TEST_DIR)/uvm/$(TEST).sv
-	$(VSIM) -c -nodpiexports -suppress 19 -suppress 3009 \
-		-work $(WORK) sc_hub_uvm_tb_top \
-		+UVM_TESTNAME=sc_hub_sweep_test \
-		+TEST_NAME=$(TEST) \
-		-do "run -all; quit -f"
-
-.PHONY: compile_rtl compile_tb compile_uvm run_directed run_uvm
+.PHONY: compile_rtl compile_uvm run_uvm_smoke
 ```
 
 ---
 
 ## 8. Simulator License and Constraints
 
-**Primary:** Questa FSE 2022.4 local license (`/data1/intelFPGA_pro/23.1/questa_fse/LR-287689_License.dat`).
-**Full-feature fallback:** ETH Mentor floating license (`8161@lic-mentor.ethz.ch`) — enables `rand`, `covergroup`, DPI.
+**Primary:** shared QuestaOne 2026 environment from
+`../../scripts/questa_one_env.sh`, using the ETH floating license chain
+(`8161@lic-mentor.ethz.ch`).
+**Harness choice:** the implemented DV environment still uses counter-based
+coverage collectors and portable deterministic stimulus, even though the active
+toolchain now supports native `rand`, `covergroup`, and DPI.
 
-| Feature | Questa FSE (local) | Full Questa (ETH license) |
-|---------|-------------------|--------------------------|
-| `rand` / `constraint` | Not available — use manual stimulus | Available |
-| `covergroup` | Not available — use counter-based collectors | Available — preferred |
-| DPI | Not available — `+define+UVM_NO_DPI` | Available |
-| GCC linking | Not available — `-suppress 19 -suppress 3009` | Available |
-| UVM version | UVM 1.2 bundled | UVM 1.2 bundled |
+| Feature | Supported on active host | Current harness usage |
+|---------|--------------------------|---------------------|
+| `rand` / `constraint` | Yes | still optional; most promoted cases stay table-driven |
+| `covergroup` | Yes | not yet adopted; closure reports still use counter collectors |
+| DPI | Yes | enabled through the shared QuestaOne wrapper |
+| UVM version | UVM 1.2 bundled | UVM 1.2 |
 
-When the ETH license is available, use `covergroup` for coverage and `rand`/`constraint` for stimulus. The counter-based fallback remains for CI environments with only the local FSE license.
+Counter-based collection and LCG-style deterministic replay remain acceptable in
+this plan, but they are now design choices for portability and stable debug
+rather than hard simulator restrictions.
 
 ---
 

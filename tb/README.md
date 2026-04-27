@@ -50,7 +50,10 @@ make compile_uvm WORK=work_uvm BUS_TYPE=AXI4
 
 ## Notes
 
-- `Makefile` now auto-prefers `/data1/intelFPGA_pro/23.1/questa_fe` when it exists, and falls back to `questa_fse` only when FPGA Edition is not installed yet.
+- The supported simulator flow is the shared QuestaOne 2026 setup from
+  `../../scripts/questa_one.mk` and `../../scripts/questa_one_env.sh`. On this
+  host that resolves to `/data1/questaone_sim/questasim` with the ETH floating
+  license variables exported by the shared wrapper.
 - AXI4 remains supported in standalone RTL simulation even though the packaged
   Platform Designer component is Avalon-MM only.
 - Old host software that still assumes the legacy bit-16 write-ack format should

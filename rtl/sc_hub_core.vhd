@@ -2,21 +2,11 @@
 -- Author: Yifeng Wang (yifenwan@phys.ethz.ch)
 -- =======================================
 -- Version : 26.6.11
--- Date    : 20260415
--- Change  : Isolate last_ext_read_data into a dedicated small process
---           (last_ext_read_data_reg) driven by last_ext_read_data_clear_pulse
---           and last_ext_read_data_capture. The bucketed CORE_RESETTING staging
---           (26.6.10) reduced the merged |sclr cone for most registers, but
---           last_ext_read_data still sat inside the big FSM process with four
---           clear branches (CSR ctrl clear at HUB_CSR_WO_CTRL, sync reset,
---           CORE_RESETTING bucket 01, and the capture if-branch). Quartus
---           merged those four branches' conditions into one |sclr enable net
---           that pulled drain_remaining[6] through a 6-LUT cone
---           (core_state~37 -> LessThan22 -> Selector2011 -> hub_err_flags~1 ->
---           ext_word_read_count -> ext_pkt_read_count -> |sclr), failing
---           round-8 Slow 85C setup at -0.411. Moving the flop to its own
---           process with a single-flop clear pulse collapses the enable cone
---           to one compare, eliminating the drain_remaining dependency.
+-- Date    : 20260421
+-- Change  : Latch the current packet's internal/external classification in
+--           DISPATCH_CAPTURING and reuse that registered bit in the decode and
+--           write-drain paths so start_address no longer fans into the
+--           ext_pkt_write_count / INT_WR_DRAINING timing cones.
 -- Version : 26.6.10
 -- Date    : 20260415
 -- Change  : Stage the core soft-reset clears through a dedicated CORE_RESETTING
@@ -157,6 +147,7 @@ architecture rtl of sc_hub_core is
     -- Quartus cannot fold the FSM combinational cone into the clear net.
     signal core_reset_bucket         : unsigned(1 downto 0) := (others => '0');
     signal pkt_info_reg              : sc_pkt_info_t := SC_PKT_INFO_RESET_CONST;
+    signal pkt_is_internal_reg       : std_logic := '0';
     signal reply_suppress_reg        : std_logic := '0';
     signal pkt_ignore_reg            : std_logic := '0';
     signal reply_has_data_reg        : std_logic := '0';
@@ -353,7 +344,7 @@ architecture rtl of sc_hub_core is
 
 begin
     -- Registered active-slot counters: breaks the combinational feedback
-    -- pkt_info_reg -> pkt_is_internal_func -> active_ext_slots -> o_rx_ready
+    -- pkt_info_reg -> pkt_is_internal_reg -> active_ext_slots -> o_rx_ready
     -- -> core_fsm -> pkt_info_reg. One-cycle latency on backpressure is
     -- acceptable for slow-control traffic.
     active_slots_reg : process(i_clk)
@@ -369,11 +360,10 @@ begin
                     active_pkt_slots <= 1;
                 end if;
                 if (
-                    (core_state /= IDLING and pkt_is_internal_func(pkt_info_reg) = false) or
+                    (core_state /= IDLING and pkt_is_internal_reg = '0') or
                     (
                         core_state = IDLING and
-                        deferred_atomic_pending = '1' and
-                        pkt_is_internal_func(deferred_atomic_pkt_info) = false
+                        deferred_atomic_pending = '1'
                     )
                 ) then
                     active_ext_slots <= 1;
@@ -538,7 +528,7 @@ begin
                 core_state = INT_WR_DRAINING and
                 drain_remaining > 0 and
                 not (
-                    pkt_is_internal_func(pkt_info_reg) and
+                    pkt_is_internal_reg = '1' and
                     pkt_is_read_func(pkt_info_reg) = false and
                     pkt_info_reg.atomic_flag = '0' and
                     unsigned(pkt_info_reg.rw_length) = 1
@@ -819,6 +809,7 @@ begin
                 core_state               <= IDLING;
                 core_reset_bucket        <= (others => '0');
                 pkt_info_reg             <= SC_PKT_INFO_RESET_CONST;
+                pkt_is_internal_reg      <= '0';
                 reply_suppress_reg       <= '0';
                 pkt_ignore_reg           <= '0';
                 reply_has_data_reg       <= '0';
@@ -1020,6 +1011,7 @@ begin
                         bus_cmd_issued <= '0';
                         if (deferred_atomic_pending = '1' and dispatch_pkt_valid_v = false) then
                             pkt_info_reg          <= deferred_atomic_pkt_info;
+                            pkt_is_internal_reg   <= '0';
                             reply_suppress_reg    <= deferred_atomic_suppress;
                             reply_has_data_reg    <= deferred_atomic_has_data;
                             reply_is_internal_reg <= '0';
@@ -1054,6 +1046,7 @@ begin
                         -- that was formerly in IDLING is now here, separated from
                         -- the dispatch search logic by a full clock cycle.
                         pkt_info_reg <= pending_pkt_mem(dispatch_queue_idx_reg);
+                        pkt_is_internal_reg <= slot_is_internal_q(dispatch_queue_idx_reg);
                         if (pkt_reply_suppressed_func(pending_pkt_mem(dispatch_queue_idx_reg))) then
                             reply_suppress_reg <= '1';
                         else
@@ -1111,7 +1104,7 @@ begin
                             resize(unsigned(pkt_info_reg.start_address(15 downto 0))
                                    - to_unsigned(HUB_CSR_BASE_ADDR_CONST, 16), 5));
                         unsupported_order_v   := (ORD_ENABLE_G = false and pkt_info_reg.order_mode /= SC_ORDER_RELAXED_CONST);
-                        unsupported_atomic_v  := (pkt_info_reg.atomic_flag = '1' and (ATOMIC_ENABLE_G = false or internal_hit_func(pkt_info_reg)));
+                        unsupported_atomic_v  := (pkt_info_reg.atomic_flag = '1' and (ATOMIC_ENABLE_G = false or pkt_is_internal_reg = '1'));
                         unsupported_feature_v := unsupported_order_v or unsupported_atomic_v;
 
                         if (pkt_info_reg.order_mode = SC_ORDER_RELEASE_CONST) then
@@ -1152,7 +1145,7 @@ begin
                                 bus_cmd_nonincrement_reg <= '1';
                             end if;
                             if (unsigned(pkt_info_reg.rw_length) = 0) then
-                                if (internal_hit_func(pkt_info_reg) = false) then
+                                if (pkt_is_internal_reg = '0') then
                                     ext_pkt_read_count <= sat_inc32_func(ext_pkt_read_count);
                                 end if;
 
@@ -1161,7 +1154,7 @@ begin
                                 else
                                     core_state <= RD_REPLY_ARMING;
                                 end if;
-                            elsif (internal_hit_func(pkt_info_reg)) then
+                            elsif (pkt_is_internal_reg = '1') then
                                 reply_is_internal_reg <= '1';
                                 core_state            <= INT_RD_OFFSETING;
                             else
@@ -1172,7 +1165,7 @@ begin
                         else
                             reply_has_data_reg <= '0';
                             if (unsigned(pkt_info_reg.rw_length) = 0) then
-                                if (internal_hit_func(pkt_info_reg) = false) then
+                                if (pkt_is_internal_reg = '0') then
                                     ext_pkt_write_count <= sat_inc32_func(ext_pkt_write_count);
                                 end if;
 
@@ -1181,7 +1174,7 @@ begin
                                 else
                                     core_state <= WR_REPLY_ARMING;
                                 end if;
-                            elsif (internal_hit_func(pkt_info_reg)) then
+                            elsif (pkt_is_internal_reg = '1') then
                                 core_state <= INT_WR_DRAINING;
                             else
                                 ext_pkt_write_count <= sat_inc32_func(ext_pkt_write_count);
@@ -1414,7 +1407,7 @@ begin
 
                     when INT_WR_DRAINING =>
                         int_sideband_write_v := (
-                            pkt_is_internal_func(pkt_info_reg) and
+                            pkt_is_internal_reg = '1' and
                             pkt_is_read_func(pkt_info_reg) = false and
                             pkt_info_reg.atomic_flag = '0' and
                             pkt_len_is_one_q = '1'
@@ -1531,6 +1524,7 @@ begin
                         if (core_reset_bucket = "00") then
                             -- Bucket 0: pkt/reply control + hub status
                             pkt_info_reg             <= SC_PKT_INFO_RESET_CONST;
+                            pkt_is_internal_reg      <= '0';
                             reply_suppress_reg       <= '0';
                             pkt_ignore_reg           <= '0';
                             reply_has_data_reg       <= '0';

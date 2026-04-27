@@ -62,7 +62,7 @@ module sc_hub_freelist_monitor #(
     end
   endtask
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     if (rst) begin
       mismatched_count   <= 0;
       overflow_count     <= 0;

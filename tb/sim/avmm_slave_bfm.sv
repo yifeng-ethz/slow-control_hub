@@ -101,7 +101,7 @@ module avmm_slave_bfm #(
     end
   end
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     if (rst) begin
       avm_waitrequest        <= 1'b0;
       avm_writeresponsevalid <= 1'b0;

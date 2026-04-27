@@ -177,7 +177,7 @@ module axi4_slave_bfm #(
     clear_rd_latency_overrides();
   end
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     if (rst) begin
       awready            <= 1'b1;
       wready             <= 1'b1;

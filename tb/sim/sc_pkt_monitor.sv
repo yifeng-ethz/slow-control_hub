@@ -22,7 +22,7 @@ module sc_pkt_monitor (
     reply_seen_count = 0;
   end
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     sc_reply_t    next_reply;
     int unsigned  next_word_index;
 

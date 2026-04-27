@@ -117,6 +117,7 @@ proc sc_hub_v2_build_avmm_master {} {
     set_interface_property hub bitsPerSymbol 8
     set_interface_property hub burstOnBurstBoundariesOnly false
     set_interface_property hub burstcountUnits WORDS
+    set_interface_property hub constantBurstBehavior true
     set_interface_property hub doStreamReads false
     set_interface_property hub doStreamWrites false
     set_interface_property hub holdTime 0
