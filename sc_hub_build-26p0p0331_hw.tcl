@@ -14,7 +14,7 @@ set_module_property GROUP "Mu3e Control Plane/Modules"
 set_module_property AUTHOR "Yifeng Wang"
 set_module_property DISPLAY_NAME "Slow Control Hub"
 set_module_property INSTANTIATE_IN_SYSTEM_MODULE true
-set_module_property ICON_PATH ../quartus_system/misc/logo/mu3e_logo.png
+set_module_property ICON_PATH ../firmware_builds/misc/logo/mu3e_logo.png
 set_module_property EDITABLE false
 set_module_property REPORT_TO_TALKBACK false
 set_module_property ALLOW_GREYBOX_GENERATION false

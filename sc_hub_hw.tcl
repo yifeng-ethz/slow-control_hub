@@ -42,7 +42,7 @@ set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY false
 set_module_property ELABORATION_CALLBACK sc_hub_elaborate
 set_module_property VALIDATION_CALLBACK sc_hub_validate
-set_module_property ICON_PATH ../quartus_system/misc/logo/mu3e_logo.png
+set_module_property ICON_PATH ../firmware_builds/misc/logo/mu3e_logo.png
 
 proc add_html_text {group_name item_name html_text} {
     add_display_item $group_name $item_name TEXT ""
